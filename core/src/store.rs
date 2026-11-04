@@ -40,6 +40,8 @@ pub struct Capture {
     /// Plain text derived from RTF by the caller, when the pasteboard had no plain text.
     pub derived_text: Option<String>,
     pub thumbnail_png: Option<Vec<u8>>,
+    /// Title for items without text, e.g. "Image 1920 × 1080".
+    pub title: Option<String>,
     pub copied_at: i64,
 }
 
@@ -56,11 +58,24 @@ pub struct ItemSummary {
     pub title: String,
     pub app: Option<String>,
     pub text_bytes: i64,
+    pub first_copied_at: i64,
     pub last_copied_at: i64,
     pub copy_count: i64,
     pub pin: Option<String>,
     pub char_count: i64,
     pub line_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Facet {
+    pub name: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Facets {
+    pub kinds: Vec<Facet>,
+    pub apps: Vec<Facet>,
 }
 
 pub struct Store {
@@ -87,8 +102,8 @@ impl Store {
     fn reload_titles(&mut self) -> Result<()> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, title, kind FROM items ORDER BY last_copied_at DESC")?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            .prepare("SELECT id, title, kind, app FROM items ORDER BY last_copied_at DESC")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         self.titles = TitleIndex::from_rows(rows.collect::<rusqlite::Result<_>>()?);
         Ok(())
     }
@@ -107,15 +122,16 @@ impl Store {
                 params![id, capture.copied_at, capture.app],
             )?;
             tx.commit()?;
-            self.titles.touch(id);
+            self.titles.touch(id, capture.app.as_deref());
             return Ok(IngestResult { id, deduplicated: true });
         }
 
         let text = plain_text(&capture);
         let kind = classify(&capture.reps, &text);
-        let title = match find(&capture.reps, UTI_FILE_PATHS) {
-            Some(paths) => file_title(&String::from_utf8_lossy(paths)),
-            None => make_title(&text, kind),
+        let title = match (find(&capture.reps, UTI_FILE_PATHS), &capture.title) {
+            (Some(paths), _) => file_title(&String::from_utf8_lossy(paths)),
+            (None, Some(title)) if text.trim().is_empty() => make_title(title, kind),
+            _ => make_title(&text, kind),
         };
         let char_count = text.chars().count() as i64;
         let line_count = if text.is_empty() { 0 } else { text.lines().count() as i64 };
@@ -143,7 +159,7 @@ impl Store {
         }
         tx.commit()?;
 
-        self.titles.push_front(id, title, kind);
+        self.titles.push_front(id, title, kind, capture.app.as_deref());
         Ok(IngestResult { id, deduplicated: false })
     }
 
@@ -156,14 +172,14 @@ impl Store {
         if changed == 0 {
             return Err(Error::NotFound(id));
         }
-        self.titles.touch(id);
+        self.titles.touch(id, None);
         Ok(())
     }
 
     /// One page of list rows. Never reads payload tables.
     pub fn list(&self, offset: i64, limit: i64) -> Result<Vec<ItemSummary>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count
+            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count, first_copied_at
              FROM items ORDER BY last_copied_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(params![limit, offset], summary_from_row)?;
@@ -172,7 +188,7 @@ impl Store {
 
     pub fn summaries(&self, ids: &[i64]) -> Result<Vec<ItemSummary>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count
+            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count, first_copied_at
              FROM items WHERE id = ?1",
         )?;
         // Ids deleted since the caller got them are skipped, not an error.
@@ -255,6 +271,22 @@ impl Store {
         self.titles.len()
     }
 
+    /// Item counts per kind and per source app, largest first, for browsing by facet.
+    pub fn facets(&self, max_apps: i64) -> Result<Facets> {
+        let count = |sql: &str, limit: i64| -> Result<Vec<Facet>> {
+            let mut stmt = self.conn.prepare_cached(sql)?;
+            let rows = stmt.query_map([limit], |r| Ok(Facet { name: r.get(0)?, count: r.get(1)? }))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+        Ok(Facets {
+            kinds: count("SELECT kind, count(*) FROM items GROUP BY kind ORDER BY 2 DESC LIMIT ?1", -1)?,
+            apps: count(
+                "SELECT app, count(*) FROM items WHERE app IS NOT NULL GROUP BY app ORDER BY 2 DESC LIMIT ?1",
+                max_apps,
+            )?,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.titles.len() == 0
     }
@@ -280,6 +312,7 @@ fn summary_from_row(r: &rusqlite::Row) -> rusqlite::Result<ItemSummary> {
         pin: r.get(7)?,
         char_count: r.get(8)?,
         line_count: r.get(9)?,
+        first_copied_at: r.get(10)?,
     })
 }
 
@@ -308,11 +341,25 @@ fn classify(reps: &[Rep], text: &str) -> &'static str {
         "image"
     } else if is_link(text) {
         "link"
+    } else if is_color(text) {
+        "color"
     } else if has(UTI_HTML) || has(UTI_RTF) {
         "rich"
     } else {
         "text"
     }
+}
+
+/// A CSS-style colour and nothing else: #rgb, #rrggbb, #rrggbbaa, rgb()/rgba(), hsl()/hsla().
+fn is_color(text: &str) -> bool {
+    let text = text.trim();
+    if let Some(hex) = text.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    let lower = text.to_ascii_lowercase();
+    ["rgb(", "rgba(", "hsl(", "hsla("].iter().any(|p| lower.starts_with(p))
+        && lower.ends_with(')')
+        && text.len() <= 40
 }
 
 /// A single web URL and nothing else.
@@ -484,11 +531,46 @@ mod tests {
         let id = store.ingest(capture).unwrap().id;
         let row = &store.list(0, 1).unwrap()[0];
         assert_eq!((row.kind.as_str(), row.title.as_str(), row.line_count), ("files", "a.csv, b.png", 2));
-        assert_eq!(store.search("Pictures", crate::SearchMode::Exact, &[], 10).unwrap()[0].id, id);
+        assert_eq!(store.search("Pictures", crate::SearchMode::Exact, &crate::Filter::default(), 10).unwrap()[0].id, id);
 
         assert_eq!(store.thumbnail(id).unwrap(), None);
         store.set_thumbnail(id, b"png").unwrap();
         assert_eq!(store.thumbnail(id).unwrap().as_deref(), Some(&b"png"[..]));
+    }
+
+    #[test]
+    fn colors_image_titles_and_facets() {
+        let mut store = Store::open_in_memory().unwrap();
+        for (i, t) in ["#1274DF", "rgb(18, 116, 223)", "#12", "not #fff"].iter().enumerate() {
+            let mut c = text(t, i as i64);
+            c.app = Some("com.apple.Terminal".into());
+            store.ingest(c).unwrap();
+        }
+        let image = Capture {
+            reps: vec![Rep { uti: "public.png".into(), data: vec![1, 2, 3] }],
+            title: Some("Image 1920 × 1080".into()),
+            app: Some("com.apple.Safari".into()),
+            copied_at: 9,
+            ..Default::default()
+        };
+        store.ingest(image).unwrap();
+        let rows = store.list(0, 10).unwrap();
+        let kinds: Vec<_> = rows.iter().map(|r| (r.title.as_str(), r.kind.as_str())).collect();
+        assert_eq!(kinds, [
+            ("Image 1920 × 1080", "image"),
+            ("not #fff", "text"),
+            ("#12", "text"),
+            ("rgb(18, 116, 223)", "color"),
+            ("#1274DF", "color"),
+        ]);
+        assert_eq!(rows[4].first_copied_at, 0);
+
+        let facets = store.facets(10).unwrap();
+        assert_eq!(facets.kinds[0], Facet { name: "text".into(), count: 2 });
+        assert_eq!(facets.apps, [
+            Facet { name: "com.apple.Terminal".into(), count: 4 },
+            Facet { name: "com.apple.Safari".into(), count: 1 },
+        ]);
     }
 
     #[test]

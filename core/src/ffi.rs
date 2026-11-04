@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::{Capture, IngestResult, ItemSummary, Rep, Result, SearchHit, SearchMode, Store};
+use crate::{Capture, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, SearchMode, Store};
 
 #[derive(uniffi::Object)]
 pub struct Remvel {
@@ -46,9 +46,13 @@ impl Remvel {
         self.store().summaries(&ids)
     }
 
-    /// `kinds` limits results to those item kinds; empty means all.
-    pub fn search(&self, query: String, mode: SearchMode, kinds: Vec<String>, limit: u32) -> Result<Vec<SearchHit>> {
-        self.store().search(&query, mode, &kinds, limit as usize)
+    /// With an empty query and a non-empty filter, lists the filtered items newest first.
+    pub fn search(&self, query: String, mode: SearchMode, filter: Filter, limit: u32) -> Result<Vec<SearchHit>> {
+        self.store().search(&query, mode, &filter, limit as usize)
+    }
+
+    pub fn facets(&self, max_apps: u32) -> Result<Facets> {
+        self.store().facets(max_apps as i64)
     }
 
     pub fn touch(&self, id: i64, at: i64) -> Result<()> {

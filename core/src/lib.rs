@@ -9,8 +9,8 @@ mod search;
 mod store;
 
 pub use ffi::Remvel;
-pub use search::{SearchHit, SearchMode};
-pub use store::{Capture, IngestResult, ItemSummary, Rep, Store};
+pub use search::{Filter, SearchHit, SearchMode};
+pub use store::{Capture, Facet, Facets, IngestResult, ItemSummary, Rep, Store};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 #[uniffi(flat_error)]
