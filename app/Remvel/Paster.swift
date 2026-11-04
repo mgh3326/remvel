@@ -35,6 +35,14 @@ enum Paster {
         }
     }
 
+    /// Puts one item on the pasteboard without pasting, for Shortcuts.
+    static func copy(id: Int64, plainText: Bool) {
+        Core.shared.run({ try contents(of: id, mode: plainText ? .plainText : .original, store: $0) }) { result in
+            guard case .success(let reps) = result else { return }
+            write(reps)
+        }
+    }
+
     private static func contents(of id: Int64, mode: PasteMode, store: Remvel) throws -> [Rep] {
         let reps = try store.reps(id: id)
         guard mode == .plainText else { return reps }
@@ -46,9 +54,11 @@ enum Paster {
         if let text = reps.first(where: { $0.uti == plain }) {
             return [text]
         }
-        // Rich-only items: the core keeps their extracted text.
-        let text = try store.previewText(id: id, byteOffset: 0, maxBytes: 1 << 40)
-        return text.isEmpty ? reps : [Rep(uti: plain, data: Data(text.utf8))]
+        // Rich-only items: the core keeps their extracted text. Images: the text found in them.
+        // Items with neither paste as they are.
+        let text = (try? store.previewText(id: id, byteOffset: 0, maxBytes: 1 << 40)) ?? ""
+        let found = text.isEmpty ? (try store.recognizedText(id: id)) ?? "" : text
+        return found.isEmpty ? reps : [Rep(uti: plain, data: Data(found.utf8))]
     }
 
     private static func write(_ reps: [Rep]) {

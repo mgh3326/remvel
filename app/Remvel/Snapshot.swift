@@ -61,10 +61,11 @@ struct Snapshot {
         var at = Int64(Date().timeIntervalSince1970 * 1000) - 3_600_000
         for (body, app) in samples {
             at += 60_000
-            _ = try store.ingest(capture: Capture(
+            let id = try store.ingest(capture: Capture(
                 reps: [Rep(uti: text, data: Data(body.utf8))], app: app, derivedText: nil,
                 thumbnailPng: nil, title: nil, copiedAt: at
-            ))
+            )).id
+            if body.hasPrefix("cargo") { try store.setPin(id: id, pin: "0000000000001") }
         }
         for (index, name) in ["river-valley", "review-panel-dark", "archive-levels"].enumerated() {
             let image = NSApp.applicationIconImage!
@@ -72,7 +73,8 @@ struct Snapshot {
             let reps = [Rep(uti: NSPasteboard.PasteboardType.png.rawValue, data: png + Data([UInt8(index)]))]
             var capture = Preprocessor.capture(reps: reps, app: "com.apple.Safari", copiedAt: at + Int64(index) * 1000)
             capture.title = "\(name).png"
-            _ = try store.ingest(capture: capture)
+            let id = try store.ingest(capture: capture).id
+            try store.setRecognizedText(id: id, text: "Remvel clipboard history 검색 미리보기")
         }
     }
 }

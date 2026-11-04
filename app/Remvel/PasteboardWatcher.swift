@@ -97,6 +97,8 @@ final class PasteboardWatcher {
             switch result {
             case .success(let ingest) where !ingest.deduplicated && !files.isEmpty:
                 self?.addThumbnail(id: ingest.id, file: files[0])
+            case .success(let ingest) where !ingest.deduplicated && Preprocessor.imageData(reps) != nil:
+                TextRecognizer.shared.recognize(ingest.id)
             case .failure(let error):
                 NSLog("Remvel: ingest failed: \(error)")
             default:

@@ -135,6 +135,7 @@ final class PreviewController: NSObject {
         textView.string = ""
         imageView.image = nil
         caption.stringValue = ""
+        caption.toolTip = nil
         fileView.previewItem = nil
         meta.stringValue = newItem.map(Self.describe) ?? ""
         meta.toolTip = newItem.map(Self.fullDates)
@@ -223,14 +224,18 @@ final class PreviewController: NSObject {
 
     private func loadImage(_ id: Int64) {
         let gen = generation
-        Core.shared.run({ store -> (CGImage, CGSize)? in
+        Core.shared.run({ store -> (CGImage, CGSize, String?)? in
             guard let data = Preprocessor.imageData(try store.reps(id: id)),
                   let image = Preprocessor.downsampled(data, maxPixels: Self.imageMaxPixels) else { return nil }
-            return (image, Preprocessor.pixelSize(data) ?? CGSize(width: image.width, height: image.height))
+            let size = Preprocessor.pixelSize(data) ?? CGSize(width: image.width, height: image.height)
+            return (image, size, try store.recognizedText(id: id))
         }) { [weak self] result in
-            guard let self, gen == self.generation, case .success(let (image, size)?) = result else { return }
+            guard let self, gen == self.generation, case .success(let (image, size, text)?) = result else { return }
             self.imageView.image = NSImage(cgImage: image, size: .zero)
+            let words = text?.split(whereSeparator: \.isWhitespace).count ?? 0
             self.caption.stringValue = "\(Int(size.width)) × \(Int(size.height)) px"
+                + (words > 0 ? " · \(words) words found, searchable" : "")
+            self.caption.toolTip = words > 0 ? text : nil
         }
     }
 

@@ -46,11 +46,17 @@ Press **⇧⌘C** (changeable in Settings) to open the history.
 | ⌥⏎ | Copy only, without pasting |
 | ⌘1–⌘9 | Paste the item with that number |
 | ⌘-click, then ⏎ | Paste several items in the order you picked them |
+| ⌥P | Pin or unpin: pinned items stay on top and are never trimmed |
+| ⌥⌫ | Delete the selected item |
 | Esc | Clear the queue, then the search, then close |
 | ⌥⌘S | Show the sidebar: browse by kind and source app |
 | ⌘, | Settings |
 
 Filter with the filter button next to the search field, or type `#link` `#image` `#file` `#color` `#text` `#rich` along with search text.
+
+Search also finds words inside copied images: Remvel reads them on your Mac with Apple's Vision framework, in a separate short-lived process so the app itself stays small. ⇧⏎ on an image pastes its text.
+
+The Shortcuts app lists Remvel's actions (search, recent items, get text, copy, open), which Spotlight and Siri can run too.
 
 Pasting needs Accessibility permission; Remvel asks on first launch. Without it, Remvel only copies the item.
 

@@ -2,6 +2,15 @@
 
 Each version's section becomes its GitHub release notes and is shown in Remvel's update prompt.
 
+## 0.4.0
+
+- Pin items with ⌥P: pinned items stay at the top of the history and are never trimmed.
+- Delete an item with ⌥⌫.
+- Right-click a row for Paste, Paste as Plain Text, Copy, Pin and Delete.
+- Text in copied images is recognized on your Mac (Apple Vision), so searches find the words in screenshots. ⇧⏎ on an image pastes its text. Settings → Search turns this off.
+- Shortcuts, Spotlight and Siri actions: Search Clipboard History, Get Recent Clipboard Items, Get Text of Clipboard Item, Copy Clipboard Item, Open Remvel.
+- ⌘A, ⌘C, ⌘X, ⌘V and ⌘Z work in the search field. ⌘C with nothing selected there copies the selected item.
+
 ## 0.3.0
 
 - The default shortcut is now ⇧⌘C, as in Maccy. Remvel warns when another app already holds the shortcut.

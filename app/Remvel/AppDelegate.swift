@@ -50,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         watcher.onIngest = { [weak self] in self?.popup.historyDidChange() }
         watcher.start()
+        // Old screenshots become searchable in the background, after launch has settled.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { TextRecognizer.shared.backfill() }
 
         if !settings.hasOnboarded {
             settings.hasOnboarded = true
@@ -119,6 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
         }
         return menu
+    }
+
+    /// For the Open Remvel shortcut.
+    func showPopup(query: String) {
+        popup.show(query: query)
     }
 
     @objc private func togglePopup() {

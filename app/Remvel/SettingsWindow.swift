@@ -69,6 +69,17 @@ private struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Toggle("Find text in copied images", isOn: $settings.recognizeText)
+                    .onChange(of: settings.recognizeText) { _, enabled in
+                        if enabled { TextRecognizer.shared.backfill() }
+                    }
+            } header: {
+                Text("Search")
+            } footer: {
+                Text("Images are read on this Mac with Apple's Vision framework, a fraction of a second each, so searching finds the words in screenshots.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Toggle("Pause recording", isOn: $settings.paused)
                 Toggle("Ignore copies from other devices (Universal Clipboard)", isOn: $settings.ignoreRemoteClipboard)
             } header: {

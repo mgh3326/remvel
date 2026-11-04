@@ -5,12 +5,40 @@ private final class Panel: NSPanel {
     var onQuickPaste: ((Int) -> Void)?
     var onSettings: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
+    var onTogglePin: (() -> Void)?
+    /// ⌘C with no text selected in the search field copies the selected item.
+    var onCopyItem: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
+
+    /// ⌥P would type "π" into the search field, so it is taken before the field sees it.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .option,
+           event.keyCode == 35 { // P
+            onTogglePin?()
+            return
+        }
+        super.sendEvent(event)
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        // Remvel has no Edit menu to route these, so the search field gets them here.
+        if let editor = firstResponder as? NSTextView {
+            switch (flags, key) {
+            case (.command, "a"): editor.selectAll(nil); return true
+            case (.command, "x"): editor.cut(nil); return true
+            case (.command, "v"): editor.paste(nil); return true
+            case (.command, "z"): editor.undoManager?.undo(); return true
+            case ([.command, .shift], "z"): editor.undoManager?.redo(); return true
+            case (.command, "c"):
+                if editor.selectedRange().length > 0 { editor.copy(nil) } else { onCopyItem?() }
+                return true
+            default: break
+            }
+        }
         if flags == .command, let digit = Int(key), (1...9).contains(digit) {
             onQuickPaste?(digit - 1)
             return true
@@ -61,6 +89,9 @@ final class PopupController: NSObject {
     /// Items picked with ⌘-click, in the order they will be pasted. Independent of the visible rows
     /// and of the selected (previewed) row, so it survives searching and filtering.
     private var queue: [Int64] = []
+    /// Where the selection goes after the next reload: the item with `id` once its row loads,
+    /// or else `row`. Set by pinning and deleting so the selection does not jump to the top.
+    private var reselect: (id: Int64?, row: Int)?
 
     private var expanded: Bool {
         get { UserDefaults.standard.bool(forKey: "popupExpanded") }
@@ -86,6 +117,8 @@ final class PopupController: NSObject {
             SettingsWindow.shared.show()
         }
         panel.onToggleSidebar = { [weak self] in self?.toggleSidebar() }
+        panel.onTogglePin = { [weak self] in self.map { $0.togglePin(row: $0.table.selectedRow) } }
+        panel.onCopyItem = { [weak self] in self?.pasteSelected(mode: .copyOnly) }
         sidebar.onSelect = { [weak self] filter in self?.model.filter = filter }
     }
 
@@ -101,6 +134,15 @@ final class PopupController: NSObject {
         guard panel.isVisible else { return }
         model.refresh()
         loadFacets()
+    }
+
+    /// Opens the popup with `query` already typed, or brings it forward with that query.
+    func show(query: String) {
+        if !panel.isVisible { open() }
+        searchField.stringValue = query
+        model.setQuery(query)
+        NSApp.activate(ignoringOtherApps: false)
+        panel.makeKeyAndOrderFront(nil)
     }
 
     private func open() {
@@ -233,6 +275,29 @@ final class PopupController: NSObject {
         queue = []
         reloadVisibleRows()
         updateFooter()
+    }
+
+    // MARK: Pinning and deleting
+
+    /// Pinned items stay at the top of the history and are never trimmed.
+    private func togglePin(row: Int) {
+        guard let item = model.summary(at: row) else { return }
+        // The pin value orders pins: first pinned stays first.
+        let pin = item.pin == nil ? String(format: "%013lld", Int64(Date().timeIntervalSince1970 * 1000)) : nil
+        Core.shared.run({ try $0.setPin(id: item.id, pin: pin) }) { [weak self] _ in
+            self?.reselect = (item.id, row)
+            self?.model.refresh()
+        }
+    }
+
+    private func delete(row: Int) {
+        guard let item = model.summary(at: row) else { return }
+        queue.removeAll { $0 == item.id }
+        Core.shared.run({ try $0.delete(id: item.id) }) { [weak self] _ in
+            self?.reselect = (nil, row)
+            self?.model.refresh()
+            self?.loadFacets()
+        }
     }
 
     // MARK: Layout
@@ -385,6 +450,9 @@ final class PopupController: NSObject {
         table.target = self
         table.action = #selector(tableClicked)
         table.doubleAction = #selector(tableDoubleClicked)
+        let menu = NSMenu()
+        menu.delegate = self
+        table.menu = menu
     }
 
     @objc private func tableClicked() {
@@ -500,8 +568,10 @@ final class PopupController: NSObject {
         let noun = model.isFiltered ? "" : (model.rowCount == 1 ? " item" : " items")
         listCount.stringValue = "\(model.rowCount.formatted())\(noun)"
         if model.rowCount > 0 {
-            select(row: 0)
+            select(row: reselect?.row ?? 0)
+            if reselect?.id == nil { reselect = nil }
         } else {
+            reselect = nil
             preview.show(nil)
             updateFooter()
         }
@@ -509,6 +579,12 @@ final class PopupController: NSObject {
 
     private func rowsLoaded(_ rows: IndexSet) {
         table.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+        if let id = reselect?.id {
+            reselect = nil
+            if let row = rows.first(where: { model.summary(at: $0)?.id == id }) {
+                select(row: row)
+            }
+        }
         if rows.contains(table.selectedRow) {
             preview.show(model.summary(at: table.selectedRow))
             updateFooter()
@@ -535,15 +611,17 @@ final class PopupController: NSObject {
             hints = [("⏎", "Paste \(queue.count) in order"), ("⇧⏎", "As plain text"),
                      ("⌘-click", "Add or remove"), ("Esc", "Clear queue")]
         } else {
-            switch model.summary(at: table.selectedRow)?.kind {
+            let item = model.summary(at: table.selectedRow)
+            switch item?.kind {
             case "image":
-                hints = [("⏎", "Paste image"), ("⌥⏎", "Copy image")]
+                hints = [("⏎", "Paste image"), ("⇧⏎", "Paste its text"), ("⌥⏎", "Copy")]
             case "files":
-                hints = [("⏎", "Paste files"), ("⇧⏎", "Paste paths"), ("⌥⏎", "Copy only")]
+                hints = [("⏎", "Paste files"), ("⇧⏎", "Paste paths"), ("⌥⏎", "Copy")]
             default:
-                hints = [("⏎", "Paste"), ("⇧⏎", "Plain text"), ("⌥⏎", "Copy only")]
+                hints = [("⏎", "Paste"), ("⇧⏎", "Plain text"), ("⌥⏎", "Copy")]
             }
-            hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"), ("Esc", "Close")]
+            hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"),
+                      ("⌥P", item?.pin == nil ? "Pin" : "Unpin"), ("⌥⌫", "Delete")]
         }
         footer.attributedStringValue = Self.hints(hints.map { ($1, $0) })
     }
@@ -609,6 +687,8 @@ private final class HistoryCell: NSTableCellView {
     /// Title and badge without colours; `render` colours them for the selection state.
     var title = NSAttributedString() { didSet { render() } }
     var badgeText = "" { didSet { render() } }
+    /// Shown in the badge slot when the row has no queue number.
+    var pinned = false { didSet { render() } }
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { render() }
@@ -624,13 +704,26 @@ private final class HistoryCell: NSTableCellView {
             .paragraphStyle: paragraph,
         ], range: NSRange(location: 0, length: text.length))
         textField?.attributedStringValue = text
-        badge.attributedStringValue = NSAttributedString(string: badgeText, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold),
-            .foregroundColor: selected ? NSColor.alternateSelectedControlTextColor : NSColor.controlAccentColor,
-        ])
+        if badgeText.isEmpty, pinned, let pin = Self.pinSymbol {
+            let attachment = NSTextAttachment()
+            attachment.image = pin
+            let mark = NSMutableAttributedString(attachment: attachment)
+            mark.addAttribute(.foregroundColor,
+                              value: selected ? NSColor.alternateSelectedControlTextColor : NSColor.secondaryLabelColor,
+                              range: NSRange(location: 0, length: mark.length))
+            badge.attributedStringValue = mark
+        } else {
+            badge.attributedStringValue = NSAttributedString(string: badgeText, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold),
+                .foregroundColor: selected ? NSColor.alternateSelectedControlTextColor : NSColor.controlAccentColor,
+            ])
+        }
         shortcut.textColor = selected
             ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.7) : .tertiaryLabelColor
     }
+
+    private static let pinSymbol = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")?
+        .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -686,11 +779,13 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
             cell.imageView?.image = nil
             cell.title = NSAttributedString()
             cell.badgeText = ""
+            cell.pinned = false
             return cell
         }
         cell.imageView?.image = icon(for: item)
         cell.title = title(for: item, row: row)
         cell.badgeText = queue.firstIndex(of: item.id).map { "\($0 + 1)" } ?? ""
+        cell.pinned = item.pin != nil
         return cell
     }
 
@@ -719,6 +814,9 @@ extension PopupController: NSSearchFieldDelegate {
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             pasteSelected(mode: flags.contains(.option) ? .copyOnly : flags.contains(.shift) ? .plainText : .original)
+        case #selector(NSResponder.deleteWordBackward(_:)) where NSApp.currentEvent?.modifierFlags.contains(.option) == true:
+            // ⌥⌫ deletes the selected item, as in Maccy.
+            delete(row: table.selectedRow)
         case #selector(NSResponder.cancelOperation(_:)):
             if !queue.isEmpty {
                 clearQueue()
@@ -733,6 +831,42 @@ extension PopupController: NSSearchFieldDelegate {
         }
         return true
     }
+}
+
+/// Right-click menu on a row: the keyboard actions, for people who reach for the mouse.
+extension PopupController: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = table.clickedRow
+        guard let item = model.summary(at: row) else { return }
+        let add = { (title: String, key: String, modifiers: NSEvent.ModifierFlags, action: @escaping () -> Void) in
+            let menuItem = MenuAction(title: title, key: key, action: action)
+            menuItem.keyEquivalentModifierMask = modifiers
+            menu.addItem(menuItem)
+        }
+        add("Paste", "\r", [], { [weak self] in self?.paste(rows: [row], mode: .original) })
+        add(item.kind == "image" ? "Paste Text in Image" : "Paste as Plain Text", "\r", .shift,
+            { [weak self] in self?.paste(rows: [row], mode: .plainText) })
+        add("Copy", "\r", .option, { [weak self] in self?.paste(rows: [row], mode: .copyOnly) })
+        menu.addItem(.separator())
+        add(item.pin == nil ? "Pin" : "Unpin", "p", .option, { [weak self] in self?.togglePin(row: row) })
+        add("Delete", "\u{8}", .option, { [weak self] in self?.delete(row: row) })
+    }
+}
+
+/// A menu item that runs a closure, for menus built on the fly.
+private final class MenuAction: NSMenuItem {
+    private let run: () -> Void
+
+    init(title: String, key: String, action: @escaping () -> Void) {
+        run = action
+        super.init(title: title, action: #selector(runAction), keyEquivalent: key)
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError() }
+
+    @objc private func runAction() { run() }
 }
 
 extension PopupController: NSWindowDelegate {
