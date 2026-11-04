@@ -88,9 +88,9 @@ final class PopupController: NSObject {
     static let listWidth: CGFloat = 396
     static let rowHeight: CGFloat = 30
     static let quickPasteRows = 9
-    /// Apps listed in the filter menu and sidebar.
+    /// Apps listed in the filter menu; the sidebar scrolls through all of them.
     static let maxFacetApps = 12
-    /// Apps that `@name` in the search field can pick from.
+    /// Apps that `@name` in the search field and the sidebar can pick from.
     static let maxKnownApps: UInt32 = 500
 
     /// Screen frame of the menu bar icon, for `PopupPosition.statusItem`.
@@ -221,9 +221,8 @@ final class PopupController: NSObject {
 
     private func loadFacets() {
         Core.shared.run({ try $0.facets(maxApps: Self.maxKnownApps) }) { [weak self] result in
-            guard let self, case .success(var facets) = result else { return }
+            guard let self, case .success(let facets) = result else { return }
             self.model.knownApps = facets.apps.map(\.name)
-            facets.apps = Array(facets.apps.prefix(Self.maxFacetApps))
             self.facets = facets
             self.sidebar.update(facets: facets, total: facets.kinds.reduce(0) { $0 + $1.count }, filter: self.model.filter)
         }
@@ -599,7 +598,7 @@ final class PopupController: NSObject {
         if !facets.apps.isEmpty {
             menu.addItem(.separator())
             menu.addItem(.sectionHeader(title: "App"))
-            for app in facets.apps {
+            for app in facets.apps.prefix(Self.maxFacetApps) {
                 let item = menu.addItem(withTitle: "\(SourceApps.name(app.name))  \(app.count.formatted())",
                                         action: #selector(toggleApp(_:)), keyEquivalent: "")
                 item.image = SourceApps.icon(app.name).map(Self.menuIcon)

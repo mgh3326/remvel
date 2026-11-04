@@ -10,6 +10,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 - Deleted rows fade out.
 - Runs on Intel Macs too (universal build).
 - `@safari` and the like in the search field filter by source app.
+- The sidebar (⌥⌘S) lists every app you copied from, not just the top 12.
 - Settings → Privacy can hide the popup from screen sharing, recordings and screenshots.
 - Pin items with ⌥P: pinned items stay at the top of the history and are never trimmed.
 - Delete an item with ⌥⌫.
