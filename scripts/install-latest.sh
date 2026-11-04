@@ -1,8 +1,10 @@
 #!/bin/sh
-# Installs the newest CI build of main (the "nightly" release) into /Applications and starts it.
+# Installs the latest Remvel release into /Applications and starts it.
+# --nightly installs the newest build of main instead.
 # After that, Remvel updates itself from its menu bar menu.
 set -eu
-API=https://api.github.com/repos/mgh3326/remvel/releases/tags/nightly
+API=https://api.github.com/repos/mgh3326/remvel/releases/latest
+[ "${1:-}" = --nightly ] && API=https://api.github.com/repos/mgh3326/remvel/releases/tags/nightly
 DEST=/Applications/Remvel.app
 
 WORK=$(mktemp -d)
@@ -15,7 +17,7 @@ assets = json.load(open(sys.argv[1]))["assets"]
 builds = [(int(m.group(1)), a["browser_download_url"]) for a in assets if (m := re.fullmatch(r"Remvel-(\d+)\.zip", a["name"]))]
 print(max(builds)[1] if builds else "")
 ' "$WORK/release.json")
-[ -n "$URL" ] || { echo "No nightly build published yet." >&2; exit 1; }
+[ -n "$URL" ] || { echo "Nothing published at $API yet." >&2; exit 1; }
 
 echo "Downloading $URL"
 curl -fsSL "$URL" -o "$WORK/Remvel.zip"

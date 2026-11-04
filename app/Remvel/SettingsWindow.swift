@@ -45,6 +45,7 @@ private struct SettingsView: View {
                         Text(limit == 0 ? "Unlimited" : "\(limit.formatted()) items").tag(limit)
                     }
                 }
+                Toggle("Show in Dock", isOn: $settings.showInDock)
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         do {
@@ -58,6 +59,14 @@ private struct SettingsView: View {
                             launchAtLogin = SMAppService.mainApp.status == .enabled
                         }
                     }
+            }
+            Section {
+                Toggle("Include nightly builds", isOn: $settings.nightlyUpdates)
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text("Remvel checks GitHub every six hours. Nightly builds come from every change to main; releases are tested versions.")
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Pause recording", isOn: $settings.paused)

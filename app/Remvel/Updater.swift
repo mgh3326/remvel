@@ -1,17 +1,26 @@
 import AppKit
 import Security
 
-/// Updates from the rolling `nightly` GitHub release that CI publishes for every build of main.
+/// Updates from GitHub Releases, like Sparkle does from an appcast:
+/// tagged releases (`v0.2.0`) by default, plus the rolling `nightly` release when the user opts in.
+/// Both carry a `Remvel-<build>.zip` asset; the higher build wins.
 /// An update is installed only if it satisfies the running app's designated requirement,
 /// i.e. it is signed with the same certificate, so a tampered download is refused.
 final class Updater {
     struct Release {
         let build: Int
+        /// "0.2.0", or "nightly".
+        let version: String
+        let notes: String
         let url: URL
+
+        var title: String {
+            version == "nightly" ? "Nightly Build \(build)" : "Remvel \(version) (Build \(build))"
+        }
     }
 
     static let shared = Updater()
-    static let releaseAPI = URL(string: "https://api.github.com/repos/mgh3326/remvel/releases/tags/nightly")!
+    static let api = "https://api.github.com/repos/mgh3326/remvel/releases"
     static let checkInterval: TimeInterval = 6 * 60 * 60
 
     /// Called on the main queue whenever `available` or `installing` changes.
@@ -21,6 +30,7 @@ final class Updater {
 
     /// CI stamps the run number; local builds are 0 and never update themselves.
     let currentBuild = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
+    let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     var isUpdatable: Bool { currentBuild > 0 }
 
     private var timer: Timer?
@@ -34,29 +44,59 @@ final class Updater {
     }
 
     func check(completion: ((Release?) -> Void)? = nil) {
-        var request = URLRequest(url: Self.releaseAPI)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
-            let release = data.flatMap(Self.parse)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.available = release.flatMap { $0.build > self.currentBuild ? $0 : nil }
-                self.onChange?()
-                completion?(self.available)
-            }
-        }.resume()
+        // /releases/latest skips prereleases, which is what nightly is.
+        var urls = ["\(Self.api)/latest"]
+        if Settings.shared.nightlyUpdates {
+            urls.append("\(Self.api)/tags/nightly")
+        }
+        let group = DispatchGroup()
+        var found: [Release] = []
+        let lock = NSLock()
+        for url in urls.compactMap(URL.init) {
+            group.enter()
+            var request = URLRequest(url: url)
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            URLSession.shared.dataTask(with: request) { data, _, _ in
+                if let release = data.flatMap(Self.parse) {
+                    lock.withLock { found.append(release) }
+                }
+                group.leave()
+            }.resume()
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            self.available = found.filter { $0.build > self.currentBuild }.max { $0.build < $1.build }
+            self.onChange?()
+            completion?(self.available)
+        }
     }
 
-    /// Finds the newest `Remvel-<build>.zip` asset; while CI swaps assets there can be two.
+    /// Reads one release; picks the newest `Remvel-<build>.zip` asset, since CI briefly has two while swapping.
     static func parse(_ data: Data) -> Release? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tag = json["tag_name"] as? String,
               let assets = json["assets"] as? [[String: Any]] else { return nil }
+        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        let notes = json["body"] as? String ?? ""
         return assets.compactMap { asset -> Release? in
             guard let name = asset["name"] as? String, name.hasPrefix("Remvel-"), name.hasSuffix(".zip"),
                   let build = Int(name.dropFirst("Remvel-".count).dropLast(".zip".count)),
                   let url = (asset["browser_download_url"] as? String).flatMap(URL.init) else { return nil }
-            return Release(build: build, url: url)
+            return Release(build: build, version: version, notes: notes, url: url)
         }.max { $0.build < $1.build }
+    }
+
+    /// Shows the release notes and installs if the user agrees.
+    func offer(_ release: Release) {
+        let alert = NSAlert()
+        alert.messageText = "\(release.title) is available"
+        alert.informativeText = "You have \(currentVersion) (Build \(currentBuild)).\n\n\(release.notes)"
+        alert.addButton(withTitle: "Install and Relaunch")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            install(release)
+        }
     }
 
     func install(_ release: Release) {

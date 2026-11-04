@@ -22,26 +22,18 @@ On 100,000 items, a list page takes 0.03 ms, fuzzy search about 19 ms, and full-
 
 macOS 26 added a clipboard history to Spotlight. Remvel is for when that is not enough: unlimited history, full-text search that finds Korean and other CJK text anywhere in a clip, and no telemetry. Everything stays in one local SQLite file.
 
-## Build
+## Install
 
-Requirements: macOS 14+, Xcode, Rust (stable), [XcodeGen](https://github.com/yonaskolb/XcodeGen).
-
-```sh
-make run     # build core + app and launch
-make test    # core tests
-```
-
-CI builds every push to `main` and publishes it as the [`nightly` release](https://github.com/mgh3326/remvel/releases/tag/nightly).
-Install it once without building locally:
+Download `Remvel-<build>.zip` from the [latest release](https://github.com/mgh3326/remvel/releases/latest), unzip it, and move Remvel to Applications. Or, in Terminal:
 
 ```sh
-make install-latest   # or: curl -fsSL https://raw.githubusercontent.com/mgh3326/remvel/main/scripts/install-latest.sh | sh
+curl -fsSL https://raw.githubusercontent.com/mgh3326/remvel/main/scripts/install-latest.sh | sh
 ```
 
-After that, Remvel checks for new builds every six hours and shows **Update to Build N** in its menu bar menu.
-An update is installed only if it is signed with the same certificate as the running copy.
-CI signs with a self-signed certificate rather than a Developer ID, so macOS keeps the Accessibility permission across updates.
-Local builds (`make run`) are build 0 and never update themselves.
+Remvel is signed with its own certificate, not an Apple Developer ID, and is not notarized. When the app comes from a browser download, macOS blocks the first launch; open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal install does not hit this.
+
+Remvel checks for updates every six hours and offers them from its menu bar menu, with the release notes. Settings → Updates → **Include nightly builds** also offers every build of `main`.
+An update is installed only if it is signed with the same certificate as the running copy, so macOS keeps the Accessibility permission across updates.
 
 ## Use
 
@@ -60,6 +52,26 @@ Press **⌥⌘V** (changeable in Settings) to open the history.
 Pasting needs Accessibility permission; Remvel asks on first launch. Without it, Remvel only copies the item.
 
 The menu bar menu can pause recording. Settings has the shortcut, popup position, history limit, launch at login, ignored apps, and whether to record copies from other devices (Universal Clipboard). Passwords that apps mark as concealed are never recorded.
+
+## Build
+
+Requirements: macOS 14+, Xcode, Rust (stable), [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+
+```sh
+make run     # build core + app and launch
+make test    # core tests
+```
+
+## Releasing
+
+Add a section for the version to [CHANGELOG.md](CHANGELOG.md), then push a tag:
+
+```sh
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+CI builds and signs it and publishes a GitHub release whose notes are that CHANGELOG section. Every push to `main` also updates the [`nightly`](https://github.com/mgh3326/remvel/releases/tag/nightly) prerelease.
+Local builds (`make run`) are build 0 and never update themselves.
 
 ## Layout
 

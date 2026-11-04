@@ -28,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.hotkey?.register(combo)
             self?.openItem?.title = "Open Remvel  \(combo.label)"
         }.store(in: &subscriptions)
+        settings.$showInDock.sink { show in
+            NSApp.setActivationPolicy(show ? .regular : .accessory)
+        }.store(in: &subscriptions)
         settings.$paused.sink { [weak self] paused in
             self?.statusItem?.button?.appearsDisabled = paused
             self?.pauseItem?.state = paused ? .on : .off
@@ -61,6 +64,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Clicking the Dock icon (shown when "Show in Dock" is on) opens the popup.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        popup.toggle()
+        return false
+    }
+
     private func refreshUpdateItem() {
         let updater = Updater.shared
         guard let item = updateItem else { return }
@@ -68,9 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if updater.installing {
             item.title = "Installing Update…"
         } else if let release = updater.available {
-            item.title = "Update to Build \(release.build)"
+            item.title = "Update to \(release.title)…"
         } else {
-            item.title = "Check for Updates (Build \(updater.currentBuild))"
+            item.title = "Check for Updates…"
         }
     }
 
@@ -101,14 +110,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func updateAction() {
         let updater = Updater.shared
         if let release = updater.available {
-            updater.install(release)
+            updater.offer(release)
             return
         }
         updater.check { release in
-            guard release == nil else { return }
+            if let release {
+                updater.offer(release)
+                return
+            }
             let alert = NSAlert()
             alert.messageText = "Remvel is up to date"
-            alert.informativeText = "Build \(updater.currentBuild) is the newest build of main."
+            alert.informativeText = "You have \(updater.currentVersion) (Build \(updater.currentBuild))."
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }

@@ -74,6 +74,9 @@ final class Settings: ObservableObject {
     }
     /// 0 keeps everything.
     @Published var historyLimit: Int { didSet { defaults.set(historyLimit, forKey: "historyLimit") } }
+    @Published var showInDock: Bool { didSet { defaults.set(showInDock, forKey: "showInDock") } }
+    /// Also offer every build of main, not only tagged releases.
+    @Published var nightlyUpdates: Bool { didSet { defaults.set(nightlyUpdates, forKey: "nightlyUpdates") } }
     @Published var hotkey: KeyCombo {
         didSet { defaults.set(try? JSONEncoder().encode(hotkey), forKey: "hotkey") }
     }
@@ -88,6 +91,8 @@ final class Settings: ObservableObject {
         ignoreRemoteClipboard = defaults.bool(forKey: "ignoreRemoteClipboard")
         popupPosition = defaults.string(forKey: "popupPosition").flatMap(PopupPosition.init) ?? .center
         historyLimit = defaults.integer(forKey: "historyLimit")
+        showInDock = defaults.bool(forKey: "showInDock")
+        nightlyUpdates = defaults.bool(forKey: "nightlyUpdates")
         hotkey = defaults.data(forKey: "hotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .default
     }
