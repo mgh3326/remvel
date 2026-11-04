@@ -4,8 +4,9 @@ import Foundation
 /// so opening the popup costs the same with 200 items or 200,000.
 final class HistoryModel {
     static let pageSize = 100
-    static let searchLimit: UInt32 = 500
-    /// A kind filter with no text lists that kind newest first, up to this many.
+    /// Most results for search text.
+    static let searchLimit: UInt32 = 1_000
+    /// A filter with no text lists that many items at most, in browse order.
     static let filterLimit: UInt32 = 10_000
 
     /// Row count or order changed; reload everything.
@@ -61,8 +62,11 @@ final class HistoryModel {
         generation += 1
         let gen = generation
         let (text, typedKinds) = Self.parse(newQuery)
-        let filter = Filter(kinds: Array(Set(filter.kinds + typedKinds)), apps: filter.apps)
+        // Chosen kinds first, then typed ones, without repeats, so the same input gives the same filter.
+        let chosen = self.filter
+        let filter = Filter(kinds: chosen.kinds + typedKinds.filter { !chosen.kinds.contains($0) }, apps: chosen.apps)
 
+        // The whole history pages through `list`, which has the same order as `search` with no text.
         if text.isEmpty, filter.kinds.isEmpty, filter.apps.isEmpty {
             Core.shared.run({ $0.count() }) { [weak self] result in
                 guard let self, gen == self.generation, case .success(let count) = result else { return }
@@ -71,17 +75,9 @@ final class HistoryModel {
             return
         }
 
-        Core.shared.run({ store in
-            if text.isEmpty {
-                return try store.search(query: "", mode: .exact, filter: filter, limit: Self.filterLimit)
-            }
-            // Fuzzy over titles first, then substring matches anywhere in the full text.
-            var hits = try store.search(query: text, mode: .fuzzy, filter: filter, limit: Self.searchLimit)
-            let seen = Set(hits.map(\.id))
-            hits += try store.search(query: text, mode: .exact, filter: filter, limit: Self.searchLimit)
-                .filter { !seen.contains($0.id) }
-            return hits
-        }) { [weak self] result in
+        // The core orders results; see `Remvel.search`.
+        let limit = text.isEmpty ? Self.filterLimit : Self.searchLimit
+        Core.shared.run({ try $0.search(query: text, filter: filter, limit: limit) }) { [weak self] result in
             guard let self, gen == self.generation else { return }
             switch result {
             case .success(let hits): self.reset(count: hits.count, hits: hits)

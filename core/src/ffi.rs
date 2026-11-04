@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::{Capture, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, SearchMode, Store};
+use crate::{Capture, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store};
 
 #[derive(uniffi::Object)]
 pub struct Remvel {
@@ -46,9 +46,10 @@ impl Remvel {
         self.store().summaries(&ids)
     }
 
-    /// With an empty query and a non-empty filter, lists the filtered items newest first.
-    pub fn search(&self, query: String, mode: SearchMode, filter: Filter, limit: u32) -> Result<Vec<SearchHit>> {
-        self.store().search(&query, mode, &filter, limit as usize)
+    /// What a history view shows, for the popup and Shortcuts alike. A blank query browses
+    /// (pinned first, then newest); search text ranks by relevance and ignores pins.
+    pub fn search(&self, query: String, filter: Filter, limit: u32) -> Result<Vec<SearchHit>> {
+        self.store().search(&query, &filter, limit as usize)
     }
 
     pub fn facets(&self, max_apps: u32) -> Result<Facets> {
@@ -81,6 +82,11 @@ impl Remvel {
 
     pub fn set_recognized_text(&self, id: i64, text: String) -> Result<()> {
         self.store().set_recognized_text(id, &text)
+    }
+
+    /// The item's text, or the text recognized in an image; empty when there is neither.
+    pub fn full_text(&self, id: i64) -> Result<String> {
+        self.store().full_text(id)
     }
 
     pub fn recognized_text(&self, id: i64) -> Result<Option<String>> {
