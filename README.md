@@ -61,6 +61,16 @@ Search also finds words inside copied images: Remvel reads them on your Mac with
 
 The Shortcuts app lists Remvel's actions (search, recent items, get text, copy, open), which Spotlight and Siri can run too.
 
+### Copy from an ssh session
+
+`scripts/rcopy` copies from a remote shell to the clipboard of the Mac you are on, so it lands in Remvel too. It uses the OSC 52 terminal sequence, which Ghostty, cmux, iTerm2, kitty and WezTerm support (Terminal.app does not). Put it on the remote host:
+
+```sh
+ssh host 'mkdir -p ~/.local/bin && cat > ~/.local/bin/rcopy && chmod +x ~/.local/bin/rcopy' < scripts/rcopy
+```
+
+Then, on that host: `git diff | rcopy`, `rcopy ~/.ssh/config`, or `rcopy -t` to test. Inside tmux, also set `set -g allow-passthrough on`.
+
 Pasting needs Accessibility permission; Remvel asks on first launch. Without it, Remvel only copies the item.
 
 The menu bar menu can pause recording. Settings has the shortcut, popup position, history limit, Show in Dock, launch at login, updates, ignored apps, and whether to record copies from other devices (Universal Clipboard). Passwords that apps mark as concealed are never recorded.

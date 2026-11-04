@@ -1,0 +1,36 @@
+#!/bin/sh
+# Copies to the clipboard of the Mac you are ssh-ing from, and so into Remvel's history.
+# Uses OSC 52, which the local terminal turns into a clipboard write (Ghostty, cmux, iTerm2,
+# kitty, WezTerm; not Terminal.app). Install it on the remote host, then:
+#
+#   git diff | rcopy        rcopy ~/.ssh/config        rcopy -t   (test)
+set -e
+
+text=
+if [ "$1" = "-t" ]; then
+    text="rcopy test from $(hostname) at $(date '+%H:%M:%S')"
+    data=$(printf '%s' "$text" | base64 | tr -d '\n')
+elif [ $# -gt 0 ]; then
+    data=$(cat "$@" | base64 | tr -d '\n')
+else
+    data=$(base64 | tr -d '\n')
+fi
+
+# Terminals drop sequences that are too long without saying so; 1 MB is safe for the ones above.
+if [ "${#data}" -gt 1000000 ]; then
+    echo "rcopy: $(( ${#data} * 3 / 4 / 1024 )) KB is too large for the terminal clipboard; copy a smaller part" >&2
+    exit 1
+fi
+
+# Multiplexers need the sequence wrapped so they pass it to the outer terminal.
+if [ -n "$TMUX" ]; then
+    seq=$(printf '\033Ptmux;\033\033]52;c;%s\a\033\\' "$data")
+elif [ "${TERM#screen}" != "$TERM" ]; then
+    seq=$(printf '\033P\033]52;c;%s\a\033\\' "$data")
+else
+    seq=$(printf '\033]52;c;%s\a' "$data")
+fi
+# Straight to the terminal, so it works in the middle of a pipe too.
+printf '%s' "$seq" >/dev/tty
+[ -n "$text" ] && echo "sent: $text" >&2
+exit 0
