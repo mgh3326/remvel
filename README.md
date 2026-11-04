@@ -31,14 +31,17 @@ make run     # build core + app and launch
 make test    # core tests
 ```
 
-CI builds every push to `main` and attaches the app to the run as `Remvel.zip`.
-To install the newest build without building locally (needs the [GitHub CLI](https://cli.github.com)):
+CI builds every push to `main` and publishes it as the [`nightly` release](https://github.com/mgh3326/remvel/releases/tag/nightly).
+Install it once without building locally:
 
 ```sh
-make install-latest   # or: scripts/install-latest.sh
+make install-latest   # or: curl -fsSL https://raw.githubusercontent.com/mgh3326/remvel/main/scripts/install-latest.sh | sh
 ```
 
-CI signs with a self-signed certificate rather than a Developer ID, so every build has the same signature and macOS keeps the Accessibility permission across updates. A zip downloaded from the browser is quarantined; right-click the app and choose **Open** the first time.
+After that, Remvel checks for new builds every six hours and shows **Update to Build N** in its menu bar menu.
+An update is installed only if it is signed with the same certificate as the running copy.
+CI signs with a self-signed certificate rather than a Developer ID, so macOS keeps the Accessibility permission across updates.
+Local builds (`make run`) are build 0 and never update themselves.
 
 ## Use
 

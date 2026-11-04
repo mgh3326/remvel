@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var openItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
+    private var updateItem: NSMenuItem?
     private var subscriptions: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -49,6 +50,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--show-popup") {
             togglePopup()
         }
+
+        let updater = Updater.shared
+        updater.onChange = { [weak self] in self?.refreshUpdateItem() }
+        refreshUpdateItem()
+        if CommandLine.arguments.contains("--update-now") {
+            updater.check { release in release.map(updater.install) }
+        } else {
+            updater.start()
+        }
+    }
+
+    private func refreshUpdateItem() {
+        let updater = Updater.shared
+        guard let item = updateItem else { return }
+        item.isHidden = !updater.isUpdatable
+        if updater.installing {
+            item.title = "Installing Update…"
+        } else if let release = updater.available {
+            item.title = "Update to Build \(release.build)"
+        } else {
+            item.title = "Check for Updates (Build \(updater.currentBuild))"
+        }
     }
 
     private func makeMenu() -> NSMenu {
@@ -57,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pauseItem = menu.addItem(withTitle: "Pause Recording", action: #selector(togglePause), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        updateItem = menu.addItem(withTitle: "Check for Updates", action: #selector(updateAction), keyEquivalent: "")
         menu.addItem(.separator())
         let quit = menu.addItem(withTitle: "Quit Remvel", action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q")
@@ -72,6 +96,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePause() {
         settings.paused.toggle()
+    }
+
+    @objc private func updateAction() {
+        let updater = Updater.shared
+        if let release = updater.available {
+            updater.install(release)
+            return
+        }
+        updater.check { release in
+            guard release == nil else { return }
+            let alert = NSAlert()
+            alert.messageText = "Remvel is up to date"
+            alert.informativeText = "Build \(updater.currentBuild) is the newest build of main."
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
     }
 
     @objc private func showSettings() {

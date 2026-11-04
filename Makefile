@@ -1,6 +1,8 @@
 CORE := core
 APP := app
 LIB := $(CORE)/target/release/libremvel_core.a
+# CI passes its run number; 0 marks a local build, which never updates itself.
+BUILD_NUMBER ?= 0
 # Must match deploymentTarget in app/project.yml.
 export MACOSX_DEPLOYMENT_TARGET := 14.0
 
@@ -21,7 +23,7 @@ bindings: core
 app: bindings
 	cd $(APP) && xcodegen generate --quiet
 	xcodebuild -project $(APP)/Remvel.xcodeproj -scheme Remvel -configuration Release \
-		-derivedDataPath build CODE_SIGN_IDENTITY=- build -quiet
+		-derivedDataPath build CODE_SIGN_IDENTITY=- CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) build -quiet
 
 test:
 	cd $(CORE) && cargo test

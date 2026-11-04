@@ -10,10 +10,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     # The app icon is an Icon Composer document, which needs Xcode 26 or later.
     runs-on: macos-26
+    permissions:
+      # Publishing the nightly release.
+      contents: write
+    env:
+      # Updates compare this number, so it must only grow.
+      BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v5
 
@@ -46,3 +55,24 @@ jobs:
           name: Remvel-${{ github.sha }}
           path: Remvel.zip
           if-no-files-found: error
+
+      # Remvel's updater and scripts/install-latest.sh read this release.
+      # The new asset is uploaded before old ones are removed, so a download never finds none.
+      - name: Publish nightly release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="Remvel-$BUILD_NUMBER.zip"
+          cp Remvel.zip "$asset"
+          git tag -f nightly
+          git push -f origin nightly
+          notes="Build $BUILD_NUMBER of main at ${GITHUB_SHA::7}. Install: scripts/install-latest.sh, or Remvel's menu → Update."
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release upload nightly "$asset" --clobber
+            gh release edit nightly --prerelease --title "Nightly (build $BUILD_NUMBER)" --notes "$notes"
+          else
+            gh release create nightly "$asset" --prerelease --title "Nightly (build $BUILD_NUMBER)" --notes "$notes"
+          fi
+          gh release view nightly --json assets -q '.assets[].name' \
+            | grep -v -x "$asset" | while read -r old; do gh release delete-asset nightly "$old" -y; done
