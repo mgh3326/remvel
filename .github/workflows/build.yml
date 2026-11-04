@@ -30,6 +30,12 @@ jobs:
       - name: Build app
         run: make app
 
+      - name: Sign
+        env:
+          REMVEL_CERT_P12: ${{ secrets.REMVEL_CERT_P12 }}
+          REMVEL_CERT_PASSWORD: ${{ secrets.REMVEL_CERT_PASSWORD }}
+        run: scripts/sign.sh build/Build/Products/Release/Remvel.app
+
       - name: Package
         run: |
           ditto -c -k --keepParent build/Build/Products/Release/Remvel.app Remvel.zip

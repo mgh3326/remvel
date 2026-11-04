@@ -31,7 +31,14 @@ make run     # build core + app and launch
 make test    # core tests
 ```
 
-CI builds every push to `main`; the app is attached to each run as `Remvel.zip`. It is ad-hoc signed, so on first launch right-click it and choose **Open**.
+CI builds every push to `main` and attaches the app to the run as `Remvel.zip`.
+To install the newest build without building locally (needs the [GitHub CLI](https://cli.github.com)):
+
+```sh
+make install-latest   # or: scripts/install-latest.sh
+```
+
+CI signs with a self-signed certificate rather than a Developer ID, so every build has the same signature and macOS keeps the Accessibility permission across updates. A zip downloaded from the browser is quarantined; right-click the app and choose **Open** the first time.
 
 ## Use
 

@@ -4,7 +4,7 @@ LIB := $(CORE)/target/release/libremvel_core.a
 # Must match deploymentTarget in app/project.yml.
 export MACOSX_DEPLOYMENT_TARGET := 14.0
 
-.PHONY: all core bindings app test run clean
+.PHONY: all core bindings app test run install-latest clean
 
 all: app
 
@@ -28,6 +28,10 @@ test:
 
 run: app
 	open build/Build/Products/Release/Remvel.app
+
+# The newest CI build of main, without building locally.
+install-latest:
+	scripts/install-latest.sh
 
 clean:
 	rm -rf build $(APP)/Remvel.xcodeproj
