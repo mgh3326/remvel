@@ -2,6 +2,12 @@
 
 Each version's section becomes its GitHub release notes and is shown in Remvel's update prompt.
 
+## Unreleased
+
+- The popup and Shortcuts show search results in the same order.
+- Filtered lists (a kind, an app, or a `#tag` with no search text) show pinned items first, like the full history. Search results rank by match and ignore pins; pinned items keep their badge.
+- Items copied or pasted at the same moment keep one order in the list, filters, search, and after relaunch.
+
 ## 0.4.0
 
 - Pin items with ⌥P: pinned items stay at the top of the history and are never trimmed.
