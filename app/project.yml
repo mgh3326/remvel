@@ -1,0 +1,32 @@
+name: Remvel
+options:
+  bundleIdPrefix: io.github.remvel
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Remvel:
+    type: application
+    platform: macOS
+    sources:
+      - Remvel
+      - Generated/remvel_core.swift
+    info:
+      path: Remvel/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleDisplayName: Remvel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.remvel.Remvel
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/Generated/include
+        OTHER_LDFLAGS: $(SRCROOT)/../core/target/release/libremvel_core.a
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO
+        GENERATE_INFOPLIST_FILE: NO

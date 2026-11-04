@@ -1,0 +1,5 @@
+/core/target
+/build
+/app/Remvel.xcodeproj
+/app/Generated
+.DS_Store

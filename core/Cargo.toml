@@ -1,0 +1,26 @@
+[package]
+name = "remvel_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blake3 = "1.8.7"
+html2text = "0.17.4"
+nucleo-matcher = "0.3.1"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+thiserror = "2.0.21"
+uniffi = { version = "0.32", features = ["cli"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
