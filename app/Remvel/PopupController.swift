@@ -158,6 +158,8 @@ final class PopupController: NSObject {
         footer.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         footer.textColor = .tertiaryLabelColor
         footer.lineBreakMode = .byTruncatingTail
+        // Long labels must truncate, not widen the panel.
+        footer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         for sub in [searchField, tableScroll, divider, preview.view, footer] {
             sub.translatesAutoresizingMaskIntoConstraints = false
@@ -255,7 +257,7 @@ final class PopupController: NSObject {
     }
 
     private func icon(for item: ItemSummary, row: Int) -> NSImage? {
-        if item.kind == "image", let thumbnail = thumbnail(for: item, row: row) {
+        if item.kind == "image" || item.kind == "files", let thumbnail = thumbnail(for: item, row: row) {
             return thumbnail
         }
         if let app = item.app, let icon = SourceApps.icon(app) {

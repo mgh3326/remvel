@@ -59,6 +59,10 @@ impl Remvel {
         self.store().preview_text(id, byte_offset, max_bytes)
     }
 
+    pub fn set_thumbnail(&self, id: i64, png: Vec<u8>) -> Result<()> {
+        self.store().set_thumbnail(id, &png)
+    }
+
     pub fn thumbnail(&self, id: i64) -> Result<Option<Vec<u8>>> {
         self.store().thumbnail(id)
     }

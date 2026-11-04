@@ -19,6 +19,9 @@ const UTI_TEXT: &str = "public.utf8-plain-text";
 const UTI_HTML: &str = "public.html";
 const UTI_RTF: &str = "public.rtf";
 const UTI_FILE_URL: &str = "public.file-url";
+/// Remvel's own rep for file copies: every copied path, one per line.
+/// The pasteboard keeps one item per file; this keeps all of them in one item.
+pub const UTI_FILE_PATHS: &str = "io.github.remvel.file-paths";
 const IMAGE_UTIS: &[&str] = &["public.png", "public.tiff", "public.jpeg", "public.heic"];
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -110,7 +113,10 @@ impl Store {
 
         let text = plain_text(&capture);
         let kind = classify(&capture.reps, &text);
-        let title = make_title(&text, kind);
+        let title = match find(&capture.reps, UTI_FILE_PATHS) {
+            Some(paths) => file_title(&String::from_utf8_lossy(paths)),
+            None => make_title(&text, kind),
+        };
         let char_count = text.chars().count() as i64;
         let line_count = if text.is_empty() { 0 } else { text.lines().count() as i64 };
 
@@ -195,6 +201,12 @@ impl Store {
             .optional()?;
         let bytes = bytes.ok_or(Error::NotFound(id))?;
         Ok(utf8_window(&bytes, lead as usize))
+    }
+
+    /// For thumbnails made after ingest, such as Quick Look renders of copied files.
+    pub fn set_thumbnail(&mut self, id: i64, png: &[u8]) -> Result<()> {
+        self.conn.execute("INSERT OR REPLACE INTO thumbnails (item_id, png) VALUES (?1, ?2)", params![id, png])?;
+        Ok(())
     }
 
     pub fn thumbnail(&self, id: i64) -> Result<Option<Vec<u8>>> {
@@ -290,7 +302,7 @@ fn find<'a>(reps: &'a [Rep], uti: &str) -> Option<&'a [u8]> {
 
 fn classify(reps: &[Rep], text: &str) -> &'static str {
     let has = |uti: &str| reps.iter().any(|r| r.uti == uti);
-    if has(UTI_FILE_URL) {
+    if has(UTI_FILE_URL) || has(UTI_FILE_PATHS) {
         "files"
     } else if IMAGE_UTIS.iter().any(|u| has(u)) && !has(UTI_TEXT) {
         "image"
@@ -312,6 +324,10 @@ fn is_link(text: &str) -> bool {
 }
 
 fn plain_text(capture: &Capture) -> String {
+    // Full paths, so search finds a file by any folder in its path.
+    if let Some(paths) = find(&capture.reps, UTI_FILE_PATHS) {
+        return String::from_utf8_lossy(paths).into_owned();
+    }
     if let Some(text) = find(&capture.reps, UTI_TEXT) {
         return String::from_utf8_lossy(text).into_owned();
     }
@@ -344,6 +360,12 @@ fn make_title(text: &str, kind: &str) -> String {
     }
     let title = title.trim_end().to_owned();
     if title.is_empty() { format!("[{kind}]") } else { title }
+}
+
+/// "a.csv" for one file, "a.csv, b.png" for more.
+fn file_title(paths: &str) -> String {
+    let names: Vec<&str> = paths.lines().filter(|l| !l.is_empty()).map(|p| p.rsplit('/').next().unwrap_or(p)).collect();
+    make_title(&names.join(", "), "files")
 }
 
 /// Drops the partial scalars at both ends of a byte window.
@@ -446,6 +468,27 @@ mod tests {
         let rows = store.list(0, 10).unwrap();
         assert_eq!(rows[0].kind, "link");
         assert_eq!((rows[1].kind.as_str(), rows[1].char_count, rows[1].line_count), ("text", 16, 2));
+    }
+
+    #[test]
+    fn file_copies_are_titled_by_name_and_searchable_by_path() {
+        let mut store = Store::open_in_memory().unwrap();
+        let capture = Capture {
+            reps: vec![
+                Rep { uti: UTI_TEXT.into(), data: "a.csv".into() },
+                Rep { uti: UTI_FILE_PATHS.into(), data: "/Users/me/Downloads/a.csv\n/Users/me/Pictures/b.png".into() },
+            ],
+            copied_at: 1,
+            ..Default::default()
+        };
+        let id = store.ingest(capture).unwrap().id;
+        let row = &store.list(0, 1).unwrap()[0];
+        assert_eq!((row.kind.as_str(), row.title.as_str(), row.line_count), ("files", "a.csv, b.png", 2));
+        assert_eq!(store.search("Pictures", crate::SearchMode::Exact, &[], 10).unwrap()[0].id, id);
+
+        assert_eq!(store.thumbnail(id).unwrap(), None);
+        store.set_thumbnail(id, b"png").unwrap();
+        assert_eq!(store.thumbnail(id).unwrap().as_deref(), Some(&b"png"[..]));
     }
 
     #[test]

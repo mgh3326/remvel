@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
 /// The AppKit-only parts of ingest. Runs on the core queue, never the main thread.
@@ -42,8 +43,23 @@ enum Preprocessor {
         return CGSize(width: width, height: height)
     }
 
+    /// A Quick Look thumbnail of a file (document page, image, or file-type icon), as PNG.
+    /// Calls back on an arbitrary queue.
+    static func fileThumbnailPNG(_ url: URL, completion: @escaping (Data?) -> Void) {
+        let side = CGFloat(thumbnailMaxPixels) / 2
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url, size: CGSize(width: side, height: side), scale: 2, representationTypes: .all
+        )
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { thumbnail, _ in
+            completion(thumbnail.flatMap { png($0.cgImage) })
+        }
+    }
+
     private static func downsampledPNG(_ data: Data, maxPixels: Int) -> Data? {
-        guard let image = downsampled(data, maxPixels: maxPixels) else { return nil }
+        downsampled(data, maxPixels: maxPixels).flatMap(png)
+    }
+
+    private static func png(_ image: CGImage) -> Data? {
         let out = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else {
             return nil

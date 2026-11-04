@@ -10,6 +10,8 @@ final class PasteboardWatcher {
 
     /// nspasteboard.org: the bundle id of the app that wrote the pasteboard.
     static let sourceType = NSPasteboard.PasteboardType("org.nspasteboard.source")
+    /// Matches UTI_FILE_PATHS in the core: every copied path, one per line.
+    static let filePathsUTI = "io.github.remvel.file-paths"
 
     var onIngest: (() -> Void)?
 
@@ -60,7 +62,7 @@ final class PasteboardWatcher {
         idlePolls = 0
         guard !settings.paused else { return }
 
-        // TODO: multiple pasteboard items (several files) are reduced to the first one.
+        // Other items are dropped, except that every copied file's path is kept (see filePathsUTI).
         guard let item = pasteboard.pasteboardItems?.first else { return }
         let types = Set(item.types)
         guard types.isDisjoint(with: ignoredTypes),
@@ -72,23 +74,43 @@ final class PasteboardWatcher {
             ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         if let app, app == Bundle.main.bundleIdentifier || settings.ignoredApps.contains(app) { return }
 
-        let reps = item.types
+        var reps = item.types
             .filter(keptTypes.contains)
             .compactMap { type in item.data(forType: type).map { Rep(uti: type.rawValue, data: $0) } }
+        let files = types.contains(.fileURL)
+            ? pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+            : []
+        if !files.isEmpty {
+            reps.append(Rep(uti: Self.filePathsUTI, data: Data(files.map(\.path).joined(separator: "\n").utf8)))
+        }
         guard !reps.isEmpty, !Self.isBlankText(reps) else { return }
 
         let copiedAt = Int64(Date().timeIntervalSince1970 * 1000)
         let limit = Int64(settings.historyLimit)
         Core.shared.run({ store in
-            _ = try store.ingest(capture: Preprocessor.capture(reps: reps, app: app, copiedAt: copiedAt))
+            let result = try store.ingest(capture: Preprocessor.capture(reps: reps, app: app, copiedAt: copiedAt))
             if limit > 0, store.count() > UInt64(limit) {
                 _ = try store.trim(maxItems: limit)
             }
+            return result
         }) { [weak self] result in
-            if case .failure(let error) = result {
+            switch result {
+            case .success(let ingest) where !ingest.deduplicated && !files.isEmpty:
+                self?.addThumbnail(id: ingest.id, file: files[0])
+            case .failure(let error):
                 NSLog("Remvel: ingest failed: \(error)")
+            default:
+                break
             }
             self?.onIngest?()
+        }
+    }
+
+    /// Quick Look renders asynchronously, so the thumbnail is added after the item is stored.
+    private func addThumbnail(id: Int64, file: URL) {
+        Preprocessor.fileThumbnailPNG(file) { [weak self] png in
+            guard let png else { return }
+            Core.shared.run({ try $0.setThumbnail(id: id, png: png) }) { _ in self?.onIngest?() }
         }
     }
 

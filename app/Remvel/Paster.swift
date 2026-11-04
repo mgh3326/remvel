@@ -39,6 +39,10 @@ enum Paster {
         let reps = try store.reps(id: id)
         guard mode == .plainText else { return reps }
         let plain = NSPasteboard.PasteboardType.string.rawValue
+        // Files paste as their paths.
+        if let paths = reps.first(where: { $0.uti == PasteboardWatcher.filePathsUTI }) {
+            return [Rep(uti: plain, data: paths.data)]
+        }
         if let text = reps.first(where: { $0.uti == plain }) {
             return [text]
         }
@@ -48,14 +52,27 @@ enum Paster {
     }
 
     private static func write(_ reps: [Rep]) {
+        let source = Bundle.main.bundleIdentifier ?? "Remvel"
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if let paths = reps.first(where: { $0.uti == PasteboardWatcher.filePathsUTI }) {
+            // One pasteboard item per file, as Finder writes them.
+            let items = String(decoding: paths.data, as: UTF8.self).split(separator: "\n").map { path in
+                let item = NSPasteboardItem()
+                item.setString(URL(fileURLWithPath: String(path)).absoluteString, forType: .fileURL)
+                return item
+            }
+            items.first?.setString(source, forType: PasteboardWatcher.sourceType)
+            pasteboard.writeObjects(items)
+            return
+        }
         let item = NSPasteboardItem()
         for rep in reps {
             item.setData(rep.data, forType: .init(rep.uti))
         }
         // Names Remvel as the source, so the watcher does not record this as a new copy.
-        item.setString(Bundle.main.bundleIdentifier ?? "Remvel", forType: PasteboardWatcher.sourceType)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([item])
+        item.setString(source, forType: PasteboardWatcher.sourceType)
+        pasteboard.writeObjects([item])
     }
 
     private static func postCommandV() {

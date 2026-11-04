@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 /// Shows one item. Text is read 64 KB at a time and appended as the user scrolls,
 /// so a 50 MB log costs the same to open as a one-liner.
@@ -11,6 +12,8 @@ final class PreviewController: NSObject {
     private let textScroll = NSTextView.scrollableTextView()
     private var textView: NSTextView { textScroll.documentView as! NSTextView }
     private let imageView = NSImageView()
+    /// Quick Look for copied files: documents, PDFs, videos, folders.
+    private let fileView = QLPreviewView(frame: .zero, style: .compact)!
     private let info = NSTextField(labelWithString: "")
 
     private var item: ItemSummary?
@@ -35,8 +38,11 @@ final class PreviewController: NSObject {
         info.textColor = .secondaryLabelColor
         info.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         info.lineBreakMode = .byTruncatingTail
+        // Long info lines must truncate, not widen the panel.
+        info.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        fileView.shouldCloseWithWindow = false
 
-        for sub in [textScroll, imageView, info] {
+        for sub in [textScroll, imageView, fileView, info] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(sub)
         }
@@ -49,6 +55,10 @@ final class PreviewController: NSObject {
             imageView.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: textScroll.trailingAnchor),
             imageView.bottomAnchor.constraint(equalTo: textScroll.bottomAnchor),
+            fileView.topAnchor.constraint(equalTo: textScroll.topAnchor),
+            fileView.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor),
+            fileView.trailingAnchor.constraint(equalTo: textScroll.trailingAnchor),
+            fileView.bottomAnchor.constraint(equalTo: textScroll.bottomAnchor),
             info.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
             info.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
             info.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -4),
@@ -65,14 +75,41 @@ final class PreviewController: NSObject {
         imageView.image = nil
         info.stringValue = newItem.map(Self.describe) ?? ""
 
+        fileView.previewItem = nil
+        fileView.isHidden = true
         guard let newItem else { return }
         let isImage = newItem.kind == "image"
         textScroll.isHidden = isImage
         imageView.isHidden = !isImage
         if isImage {
             loadImage(newItem.id)
+        } else if newItem.kind == "files" {
+            loadFiles(newItem.id)
         } else {
             loadNextChunk()
+        }
+    }
+
+    /// Previews the first file that still exists; falls back to the list of paths.
+    private func loadFiles(_ id: Int64) {
+        let gen = generation
+        Core.shared.run({ try $0.previewText(id: id, byteOffset: 0, maxBytes: Self.chunkBytes) }) { [weak self] result in
+            guard let self, gen == self.generation, case .success(let text) = result else { return }
+            let paths = text.split(separator: "\n").map(String.init)
+            let existing = paths.filter { FileManager.default.fileExists(atPath: $0) }
+            guard let first = existing.first else {
+                self.info.stringValue += " · moved or deleted"
+                self.loadNextChunk()
+                return
+            }
+            if paths.count > 1 {
+                self.info.stringValue += " · showing \((first as NSString).lastPathComponent)"
+            } else {
+                self.info.stringValue += " · \((first as NSString).abbreviatingWithTildeInPath)"
+            }
+            self.textScroll.isHidden = true
+            self.fileView.isHidden = false
+            self.fileView.previewItem = URL(fileURLWithPath: first) as NSURL
         }
     }
 
@@ -119,6 +156,13 @@ final class PreviewController: NSObject {
         var parts = [date.formatted(date: .abbreviated, time: .shortened)]
         if let app = item.app {
             parts.append(SourceApps.name(app))
+        }
+        if item.kind == "files" {
+            parts.append(item.lineCount == 1 ? "1 file" : "\(item.lineCount) files")
+            if item.copyCount > 1 {
+                parts.append("copied \(item.copyCount)×")
+            }
+            return parts.joined(separator: " · ")
         }
         if item.charCount > 0 {
             parts.append("\(item.charCount.formatted()) chars")
