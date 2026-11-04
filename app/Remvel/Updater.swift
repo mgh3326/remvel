@@ -153,14 +153,22 @@ final class Updater {
     /// A detached shell waits for Remvel to quit, swaps the bundle, and relaunches it.
     private func replace(with app: URL) {
         let target = Bundle.main.bundleURL.path
+        // `open` can fail right after the old process exits, while Launch Services still lists it; retry.
         let script = """
+            exec >>"$3" 2>&1
+            echo "$(date): updating $1 from $2"
             while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 0.2; done
             rm -rf "$1" && ditto "$2" "$1" && xattr -dr com.apple.quarantine "$1"
-            open "$1"
+            for attempt in 1 2 3 4 5; do
+                sleep 1
+                open "$1" && exit 0
+                echo "open failed (attempt $attempt)"
+            done
             """
+        let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Remvel-update.log")
         let shell = Process()
         shell.executableURL = URL(fileURLWithPath: "/bin/sh")
-        shell.arguments = ["-c", script, "sh", target, app.path]
+        shell.arguments = ["-c", script, "sh", target, app.path, log.path]
         do {
             try shell.run()
             NSApp.terminate(nil)
