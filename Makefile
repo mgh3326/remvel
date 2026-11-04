@@ -8,7 +8,7 @@ VERSION ?=
 # Must match deploymentTarget in app/project.yml.
 export MACOSX_DEPLOYMENT_TARGET := 14.0
 
-.PHONY: all core bindings app test run install-latest install-nightly clean
+.PHONY: all core bindings app test lint fmt check run install-latest install-nightly clean
 
 all: app
 
@@ -30,6 +30,17 @@ app: bindings
 
 test:
 	cd $(CORE) && cargo test
+
+# Formatting and lints CI enforces. `make fmt` fixes formatting.
+lint:
+	cd $(CORE) && cargo fmt --check
+	cd $(CORE) && cargo clippy --all-targets -- -D warnings
+
+fmt:
+	cd $(CORE) && cargo fmt
+
+# What to run before pushing a core change.
+check: lint test
 
 run: app
 	open build/Build/Products/Release/Remvel.app

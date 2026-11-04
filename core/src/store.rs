@@ -108,7 +108,14 @@ impl Store {
             "SELECT id, title, kind, app, last_copied_at, pin FROM items ORDER BY last_copied_at DESC, id DESC",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(Entry::new(r.get(0)?, r.get(1)?, &r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?.as_deref(), r.get(4)?, r.get::<_, Option<String>>(5)?.as_deref()))
+            Ok(Entry::new(
+                r.get(0)?,
+                r.get(1)?,
+                &r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?.as_deref(),
+                r.get(4)?,
+                r.get::<_, Option<String>>(5)?.as_deref(),
+            ))
         })?;
         self.titles = TitleIndex::from_entries(rows.collect::<rusqlite::Result<_>>()?);
         Ok(())
@@ -118,9 +125,8 @@ impl Store {
         let hash = *content_hash(&capture.reps).as_bytes();
         let tx = self.conn.transaction()?;
 
-        let existing: Option<i64> = tx
-            .query_row("SELECT id FROM items WHERE content_hash = ?1", [&hash[..]], |r| r.get(0))
-            .optional()?;
+        let existing: Option<i64> =
+            tx.query_row("SELECT id FROM items WHERE content_hash = ?1", [&hash[..]], |r| r.get(0)).optional()?;
         if let Some(id) = existing {
             tx.execute(
                 "UPDATE items SET last_copied_at = ?2, copy_count = copy_count + 1, app = COALESCE(?3, app)
@@ -204,8 +210,9 @@ impl Store {
 
     /// Pinned items, in the order of their pin values.
     pub fn pinned(&self) -> Result<Vec<ItemSummary>> {
-        let mut stmt =
-            self.conn.prepare_cached(&format!("SELECT {SUMMARY_COLUMNS} FROM items WHERE pin IS NOT NULL ORDER BY pin"))?;
+        let mut stmt = self
+            .conn
+            .prepare_cached(&format!("SELECT {SUMMARY_COLUMNS} FROM items WHERE pin IS NOT NULL ORDER BY pin"))?;
         let rows = stmt.query_map([], summary_from_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
@@ -247,10 +254,7 @@ impl Store {
     }
 
     pub fn thumbnail(&self, id: i64) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .conn
-            .query_row("SELECT png FROM thumbnails WHERE item_id = ?1", [id], |r| r.get(0))
-            .optional()?)
+        Ok(self.conn.query_row("SELECT png FROM thumbnails WHERE item_id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
     /// Raw representations for writing back to the pasteboard.
@@ -274,9 +278,8 @@ impl Store {
     /// An empty `text` still records that recognition ran, so the image is not offered again.
     pub fn set_recognized_text(&mut self, id: i64, text: &str) -> Result<()> {
         let tx = self.conn.transaction()?;
-        let own: Option<String> = tx
-            .query_row("SELECT body FROM item_text WHERE item_id = ?1", [id], |r| r.get(0))
-            .optional()?;
+        let own: Option<String> =
+            tx.query_row("SELECT body FROM item_text WHERE item_id = ?1", [id], |r| r.get(0)).optional()?;
         let changed = tx.execute(
             "INSERT OR REPLACE INTO item_ocr (item_id, body) SELECT id, ?2 FROM items WHERE id = ?1",
             params![id, text],
@@ -285,7 +288,12 @@ impl Store {
             return Err(Error::NotFound(id));
         }
         tx.execute("DELETE FROM item_fts WHERE rowid = ?1", [id])?;
-        let body = [own.as_deref().unwrap_or(""), text].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join("\n");
+        let body = [own.as_deref().unwrap_or(""), text]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n");
         if !body.is_empty() {
             tx.execute("INSERT INTO item_fts (rowid, body) VALUES (?1, ?2)", params![id, body])?;
         }
@@ -310,10 +318,7 @@ impl Store {
     }
 
     pub fn recognized_text(&self, id: i64) -> Result<Option<String>> {
-        Ok(self
-            .conn
-            .query_row("SELECT body FROM item_ocr WHERE item_id = ?1", [id], |r| r.get(0))
-            .optional()?)
+        Ok(self.conn.query_row("SELECT body FROM item_ocr WHERE item_id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
     /// Images that text recognition has not seen yet, newest first.
@@ -441,9 +446,7 @@ fn is_color(text: &str) -> bool {
         return matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
     }
     let lower = text.to_ascii_lowercase();
-    ["rgb(", "rgba(", "hsl(", "hsla("].iter().any(|p| lower.starts_with(p))
-        && lower.ends_with(')')
-        && text.len() <= 40
+    ["rgb(", "rgba(", "hsl(", "hsla("].iter().any(|p| lower.starts_with(p)) && lower.ends_with(')') && text.len() <= 40
 }
 
 /// A single web URL and nothing else.
@@ -640,21 +643,27 @@ mod tests {
         store.ingest(image).unwrap();
         let rows = store.list(0, 10).unwrap();
         let kinds: Vec<_> = rows.iter().map(|r| (r.title.as_str(), r.kind.as_str())).collect();
-        assert_eq!(kinds, [
-            ("Image 1920 × 1080", "image"),
-            ("not #fff", "text"),
-            ("#12", "text"),
-            ("rgb(18, 116, 223)", "color"),
-            ("#1274DF", "color"),
-        ]);
+        assert_eq!(
+            kinds,
+            [
+                ("Image 1920 × 1080", "image"),
+                ("not #fff", "text"),
+                ("#12", "text"),
+                ("rgb(18, 116, 223)", "color"),
+                ("#1274DF", "color"),
+            ]
+        );
         assert_eq!(rows[4].first_copied_at, 0);
 
         let facets = store.facets(10).unwrap();
         assert_eq!(facets.kinds[0], Facet { name: "text".into(), count: 2 });
-        assert_eq!(facets.apps, [
-            Facet { name: "com.apple.Terminal".into(), count: 4 },
-            Facet { name: "com.apple.Safari".into(), count: 1 },
-        ]);
+        assert_eq!(
+            facets.apps,
+            [
+                Facet { name: "com.apple.Terminal".into(), count: 4 },
+                Facet { name: "com.apple.Safari".into(), count: 1 },
+            ]
+        );
     }
 
     #[test]

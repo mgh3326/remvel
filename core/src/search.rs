@@ -199,7 +199,9 @@ impl Store {
         }
         let mut hits = self.search_by(query, SearchMode::Fuzzy, filter, limit)?;
         let seen: HashSet<i64> = hits.iter().map(|h| h.id).collect();
-        hits.extend(self.search_by(query, SearchMode::Exact, filter, limit)?.into_iter().filter(|h| !seen.contains(&h.id)));
+        hits.extend(
+            self.search_by(query, SearchMode::Exact, filter, limit)?.into_iter().filter(|h| !seen.contains(&h.id)),
+        );
         hits.truncate(limit);
         Ok(hits)
     }
@@ -224,10 +226,10 @@ impl Store {
                AND (json_array_length(?4) = 0 OR items.app IN (SELECT value FROM json_each(?4)))
              ORDER BY items.last_copied_at DESC, items.id DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(
-            params![phrase, limit as i64, json_list(&filter.kinds), json_list(&filter.apps)],
-            |r| r.get(0),
-        )?;
+        let rows = stmt
+            .query_map(params![phrase, limit as i64, json_list(&filter.kinds), json_list(&filter.apps)], |r| {
+                r.get(0)
+            })?;
         rows.map(|id| Ok(SearchHit { id: id?, score: 0, title_indices: Vec::new() })).collect()
     }
 }
@@ -301,7 +303,10 @@ mod tests {
         assert_eq!(ids(store.search("deploy", &Filter::default(), 10).unwrap()), [2, 1]);
         // Browsing, filtered or not: the pin leads, as in `list`.
         assert_eq!(ids(store.search("", &Filter::default(), 10).unwrap()), [1, 3, 2]);
-        assert_eq!(ids(store.search("  ", &Filter { kinds: vec!["text".into()], apps: vec![] }, 10).unwrap()), [1, 3, 2]);
+        assert_eq!(
+            ids(store.search("  ", &Filter { kinds: vec!["text".into()], apps: vec![] }, 10).unwrap()),
+            [1, 3, 2]
+        );
         assert_eq!(list_ids(&store), [1, 3, 2]);
     }
 
