@@ -35,6 +35,18 @@ enum Paster {
         }
     }
 
+    /// Pastes text made from item `id`, e.g. by a transform; the item counts as used.
+    static func paste(text: String, from id: Int64) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        Core.shared.run({ try $0.touch(id: id, at: now) }) { _ in }
+        write([Rep(uti: NSPasteboard.PasteboardType.string.rawValue, data: Data(text.utf8))])
+        guard AXIsProcessTrusted() else {
+            Onboarding.shared.show()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: postCommandV)
+    }
+
     /// Puts one item on the pasteboard without pasting, for Shortcuts.
     static func copy(id: Int64, plainText: Bool) {
         Core.shared.run({ try contents(of: id, mode: plainText ? .plainText : .original, store: $0) }) { result in

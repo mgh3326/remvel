@@ -51,6 +51,8 @@ Press **⇧⌘C** (changeable in Settings) to open the history.
 | ⌘-click, then ⏎ | Paste several items in the order you picked them |
 | ⌥P | Pin or unpin: pinned items stay on top and are never trimmed |
 | ⌥⌫ | Delete the selected item |
+| ⌘K | Actions for the selected item, including pasting it changed (case, JSON, URL, Base64, lines) |
+| ⌘Y | Larger preview |
 | Esc | Clear the queue, then the search, then close |
 | ⌥⌘S | Show the sidebar: browse by kind and source app |
 | ⌘, | Settings |

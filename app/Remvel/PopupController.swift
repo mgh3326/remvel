@@ -8,6 +8,8 @@ private final class Panel: NSPanel {
     var onTogglePin: (() -> Void)?
     /// ⌘C with no text selected in the search field copies the selected item.
     var onCopyItem: (() -> Void)?
+    var onShowActions: (() -> Void)?
+    var onToggleLargePreview: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
 
@@ -41,6 +43,14 @@ private final class Panel: NSPanel {
         }
         if flags == .command, let digit = Int(key), (1...9).contains(digit) {
             onQuickPaste?(digit - 1)
+            return true
+        }
+        if flags == .command, key == "k" {
+            onShowActions?()
+            return true
+        }
+        if flags == .command, key == "y" {
+            onToggleLargePreview?()
             return true
         }
         if flags == .command, key == "," {
@@ -95,6 +105,11 @@ final class PopupController: NSObject {
     /// Where the selection goes after the next reload: the item with `id` once its row loads,
     /// or else `row`. Set by pinning and deleting so the selection does not jump to the top.
     private var reselect: (id: Int64?, row: Int)?
+    /// ⌘Y: the preview takes the list's place; ↑↓ still move through the list.
+    private var largePreview = false
+    private var listViews: [NSView] = []
+    private var previewBesideList: NSLayoutConstraint!
+    private var previewAlone: NSLayoutConstraint!
 
     private var expanded: Bool {
         get { UserDefaults.standard.bool(forKey: "popupExpanded") }
@@ -122,6 +137,8 @@ final class PopupController: NSObject {
         panel.onToggleSidebar = { [weak self] in self?.toggleSidebar() }
         panel.onTogglePin = { [weak self] in self.map { $0.togglePin(row: $0.table.selectedRow) } }
         panel.onCopyItem = { [weak self] in self?.pasteSelected(mode: .copyOnly) }
+        panel.onShowActions = { [weak self] in self?.showActions() }
+        panel.onToggleLargePreview = { [weak self] in self.map { $0.setLargePreview(!$0.largePreview) } }
         sidebar.onSelect = { [weak self] filter in self?.model.filter = filter }
     }
 
@@ -149,6 +166,7 @@ final class PopupController: NSObject {
     }
 
     private func open() {
+        setLargePreview(false)
         // Screen sharing, recordings and screenshots see an empty space instead, when asked.
         panel.sharingType = settings.hideFromScreenSharing ? .none : .readOnly
         searchField.stringValue = ""
@@ -163,8 +181,10 @@ final class PopupController: NSObject {
     }
 
     /// For `Snapshot`: lays the panel out as `open()` would, without showing it or taking focus.
-    func prepareSnapshot(query: String, expanded: Bool, queueRows: [Int], then: @escaping (NSView) -> Void) {
+    func prepareSnapshot(query: String, expanded: Bool, large: Bool = false, queueRows: [Int],
+                         then: @escaping (NSView) -> Void) {
         self.expanded = expanded
+        setLargePreview(large)
         searchField.stringValue = query
         queue = []
         model.filter = Filter(kinds: [], apps: [])
@@ -175,7 +195,8 @@ final class PopupController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             for row in queueRows { self.toggleQueued(row: row) }
             if let last = queueRows.last { self.select(row: last) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            // Link previews come from the network.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 then(self.panel.contentView!)
             }
         }
@@ -300,11 +321,77 @@ final class PopupController: NSObject {
     private func delete(row: Int) {
         guard let item = model.summary(at: row) else { return }
         queue.removeAll { $0 == item.id }
-        Core.shared.run({ try $0.delete(id: item.id) }) { [weak self] _ in
-            self?.reselect = (nil, row)
-            self?.model.refresh()
-            self?.loadFacets()
+        let remove = {
+            Core.shared.run({ try $0.delete(id: item.id) }) { [weak self] _ in
+                self?.reselect = (nil, row)
+                self?.model.refresh()
+                self?.loadFacets()
+            }
         }
+        // Fade the row out first, so it is clear which one went.
+        guard let rowView = table.rowView(atRow: row, makeIfNecessary: false) else { return remove() }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            rowView.animator().alphaValue = 0
+        }, completionHandler: remove)
+    }
+
+    // MARK: Actions (⌘K) and transforms
+
+    /// The selected item's actions as a menu under its row; type to jump to one.
+    private func showActions() {
+        let row = table.selectedRow
+        guard row >= 0, model.summary(at: row) != nil else { return }
+        let menu = NSMenu()
+        addActions(to: menu, row: row)
+        let rect = table.rect(ofRow: row)
+        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX + 36, y: rect.maxY), in: table)
+    }
+
+    private func addActions(to menu: NSMenu, row: Int) {
+        guard let item = model.summary(at: row) else { return }
+        let add = { (title: String, key: String, modifiers: NSEvent.ModifierFlags, action: @escaping () -> Void) in
+            let menuItem = MenuAction(title: title, key: key, action: action)
+            menuItem.keyEquivalentModifierMask = modifiers
+            menu.addItem(menuItem)
+        }
+        add("Paste", "\r", [], { [weak self] in self?.paste(rows: [row], mode: .original) })
+        add(item.kind == "image" ? "Paste Text in Image" : "Paste as Plain Text", "\r", .shift,
+            { [weak self] in self?.paste(rows: [row], mode: .plainText) })
+        add("Copy", "\r", .option, { [weak self] in self?.paste(rows: [row], mode: .copyOnly) })
+        add(largePreview ? "Smaller Preview" : "Larger Preview", "y", .command,
+            { [weak self] in self.map { $0.setLargePreview(!$0.largePreview) } })
+        menu.addItem(.separator())
+        add(item.pin == nil ? "Pin" : "Unpin", "p", .option, { [weak self] in self?.togglePin(row: row) })
+        add("Delete", "\u{8}", .option, { [weak self] in self?.delete(row: row) })
+        menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: "Paste Changed"))
+        for (index, group) in Transform.all.enumerated() {
+            if index > 0 { menu.addItem(.separator()) }
+            for transform in group {
+                add(transform.title, "", [], { [weak self] in self?.paste(id: item.id, transformedBy: transform) })
+            }
+        }
+    }
+
+    /// Pastes the item's text after `transform`; beeps when it does not apply.
+    private func paste(id: Int64, transformedBy transform: Transform) {
+        Core.shared.run({ try $0.fullText(id: id) }) { [weak self] result in
+            guard case .success(let text) = result, !text.isEmpty, let changed = transform.apply(text) else {
+                NSSound.beep()
+                return
+            }
+            self?.close()
+            Paster.paste(text: changed, from: id)
+        }
+    }
+
+    private func setLargePreview(_ on: Bool) {
+        largePreview = on
+        listViews.forEach { $0.isHidden = on }
+        previewBesideList.isActive = !on
+        previewAlone.isActive = on
+        updateFooter()
     }
 
     // MARK: Layout
@@ -384,6 +471,10 @@ final class PopupController: NSObject {
         }
         sidebarWidthConstraint = sidebar.view.widthAnchor.constraint(equalToConstant: 0)
         let listLeading = sidebar.view.trailingAnchor
+        listViews = [listHeader, listCount, tableScroll, divider]
+        previewBesideList = preview.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 16)
+        previewAlone = preview.view.leadingAnchor.constraint(equalTo: listLeading, constant: 16)
+        previewBesideList.isActive = true
 
         NSLayoutConstraint.activate([
             // Search band, 56 pt.
@@ -421,7 +512,6 @@ final class PopupController: NSObject {
 
             // Preview card with metadata pinned below it.
             preview.view.topAnchor.constraint(equalTo: listHeader.topAnchor),
-            preview.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 16),
             preview.view.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
             preview.view.bottomAnchor.constraint(equalTo: footerLine.topAnchor, constant: -12),
 
@@ -627,8 +717,8 @@ final class PopupController: NSObject {
             default:
                 hints = [("⏎", "Paste"), ("⇧⏎", "Plain text"), ("⌥⏎", "Copy")]
             }
-            hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"),
-                      ("⌥P", item?.pin == nil ? "Pin" : "Unpin"), ("⌥⌫", "Delete")]
+            hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"), ("⌘K", "Actions"),
+                      ("⌘Y", largePreview ? "Smaller" : "Larger")]
         }
         footer.attributedStringValue = Self.hints(hints.map { ($1, $0) })
     }
@@ -796,6 +886,11 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
+    /// Row views are reused; one faded out by `delete` must come back visible.
+    func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+        rowView.alphaValue = 1
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         preview.show(model.summary(at: table.selectedRow))
         updateFooter()
@@ -844,20 +939,7 @@ extension PopupController: NSSearchFieldDelegate {
 extension PopupController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let row = table.clickedRow
-        guard let item = model.summary(at: row) else { return }
-        let add = { (title: String, key: String, modifiers: NSEvent.ModifierFlags, action: @escaping () -> Void) in
-            let menuItem = MenuAction(title: title, key: key, action: action)
-            menuItem.keyEquivalentModifierMask = modifiers
-            menu.addItem(menuItem)
-        }
-        add("Paste", "\r", [], { [weak self] in self?.paste(rows: [row], mode: .original) })
-        add(item.kind == "image" ? "Paste Text in Image" : "Paste as Plain Text", "\r", .shift,
-            { [weak self] in self?.paste(rows: [row], mode: .plainText) })
-        add("Copy", "\r", .option, { [weak self] in self?.paste(rows: [row], mode: .copyOnly) })
-        menu.addItem(.separator())
-        add(item.pin == nil ? "Pin" : "Unpin", "p", .option, { [weak self] in self?.togglePin(row: row) })
-        add("Delete", "\u{8}", .option, { [weak self] in self?.delete(row: row) })
+        addActions(to: menu, row: table.clickedRow)
     }
 }
 

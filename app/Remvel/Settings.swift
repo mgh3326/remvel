@@ -82,6 +82,8 @@ final class Settings: ObservableObject {
     @Published var hideFromScreenSharing: Bool {
         didSet { defaults.set(hideFromScreenSharing, forKey: "hideFromScreenSharing") }
     }
+    /// Load a copied link's page title and image when it is previewed.
+    @Published var linkPreviews: Bool { didSet { defaults.set(linkPreviews, forKey: "linkPreviews") } }
     /// Read text in copied images on this Mac so searches find it.
     @Published var recognizeText: Bool { didSet { defaults.set(recognizeText, forKey: "recognizeText") } }
     @Published var hotkey: KeyCombo {
@@ -101,6 +103,7 @@ final class Settings: ObservableObject {
         showInDock = defaults.bool(forKey: "showInDock")
         nightlyUpdates = defaults.bool(forKey: "nightlyUpdates")
         hideFromScreenSharing = defaults.bool(forKey: "hideFromScreenSharing")
+        linkPreviews = defaults.object(forKey: "linkPreviews") as? Bool ?? true
         recognizeText = defaults.object(forKey: "recognizeText") as? Bool ?? true
         hotkey = defaults.data(forKey: "hotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .default

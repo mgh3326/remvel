@@ -1,4 +1,5 @@
 import AppKit
+import LinkPresentation
 import Quartz
 
 /// Shows one item in a fixed card with its metadata pinned below.
@@ -21,6 +22,10 @@ final class PreviewController: NSObject {
     private let caption = NSTextField(labelWithString: "")
     /// Quick Look for copied files: documents, PDFs, videos, folders.
     private let fileView = QLPreviewView(frame: .zero, style: .compact)!
+    /// Title, image and site of a copied link, fetched when the link is previewed.
+    private let linkView = LPLinkView(frame: .zero)
+    private var linkFetch: LPMetadataProvider?
+    private static let linkCache = NSCache<NSURL, LPLinkMetadata>()
     private let meta = NSTextField(labelWithString: "")
 
     private var item: ItemSummary?
@@ -81,7 +86,9 @@ final class PreviewController: NSObject {
         }
 
         let content = card.contentView!
-        for sub in [textScroll, imageView, caption, fileView] {
+        linkView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        linkView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        for sub in [textScroll, imageView, caption, fileView, linkView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(sub)
         }
@@ -118,6 +125,11 @@ final class PreviewController: NSObject {
             caption.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
             caption.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
 
+            linkView.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
+            linkView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
+            linkView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
+            linkView.bottomAnchor.constraint(lessThanOrEqualTo: caption.topAnchor, constant: -8),
+
             fileView.topAnchor.constraint(equalTo: content.topAnchor, constant: 1),
             fileView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 1),
             fileView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -1),
@@ -137,22 +149,27 @@ final class PreviewController: NSObject {
         caption.stringValue = ""
         caption.toolTip = nil
         fileView.previewItem = nil
+        linkFetch?.cancel()
+        linkFetch = nil
         meta.stringValue = newItem.map(Self.describe) ?? ""
         meta.toolTip = newItem.map(Self.fullDates)
         kindLabel.stringValue = newItem.map { Kinds.info($0.kind).name } ?? ""
 
         let kind = newItem?.kind ?? "text"
         let visual = kind == "image" || kind == "color"
-        textScroll.isHidden = visual || kind == "files"
+        let link = kind == "link" && Settings.shared.linkPreviews
+        textScroll.isHidden = visual || link || kind == "files"
         imageView.isHidden = !visual
-        caption.isHidden = !visual
+        caption.isHidden = !visual && !link
         fileView.isHidden = kind != "files"
+        linkView.isHidden = !link
 
         guard let newItem else { return }
         switch kind {
         case "image": loadImage(newItem.id)
         case "files": loadFiles(newItem.id)
         case "color": showColor(newItem.title)
+        case "link" where link: loadLink(newItem.id)
         default: loadNextChunk()
         }
     }
@@ -171,6 +188,55 @@ final class PreviewController: NSObject {
         caption.stringValue = value.hasPrefix("#")
             ? "rgb(\(r), \(g), \(b))"
             : String(format: "#%02X%02X%02X", r, g, b)
+    }
+
+    /// Shows what is known about the link at once, then the page's title and image when they arrive.
+    private func loadLink(_ id: Int64) {
+        let gen = generation
+        Core.shared.run({ try $0.previewText(id: id, byteOffset: 0, maxBytes: 4096) }) { [weak self] result in
+            guard let self, gen == self.generation else { return }
+            let text = (try? result.get())?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard let url = URL(string: text), url.scheme == "http" || url.scheme == "https" else {
+                self.linkView.isHidden = true
+                self.caption.isHidden = true
+                self.textScroll.isHidden = false
+                self.loadNextChunk()
+                return
+            }
+            self.caption.stringValue = text
+            self.caption.toolTip = text
+            if let cached = Self.linkCache.object(forKey: url as NSURL) {
+                self.linkView.metadata = cached
+                return
+            }
+            let placeholder = LPLinkMetadata()
+            placeholder.originalURL = url
+            placeholder.url = url
+            self.linkView.metadata = placeholder
+            guard !Self.looksPrivate(url) else { return }
+            let fetch = LPMetadataProvider()
+            fetch.timeout = 6
+            self.linkFetch = fetch
+            fetch.startFetchingMetadata(for: url) { metadata, _ in
+                DispatchQueue.main.async {
+                    guard let metadata else { return }
+                    Self.linkCache.setObject(metadata, forKey: url as NSURL)
+                    if gen == self.generation { self.linkView.metadata = metadata }
+                }
+            }
+        }
+    }
+
+    /// Links that may be single-use or carry credentials are never opened just to preview them:
+    /// loading a password-reset or sign-in link could use it up.
+    static func looksPrivate(_ url: URL) -> Bool {
+        if url.user != nil || url.password != nil { return true }
+        let markers = ["token", "code", "key", "sig", "auth", "pass", "secret", "reset", "magic", "otp",
+                       "session", "credential", "invite", "confirm", "verify", "login", "x-amz-"]
+        let names = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.map { $0.name.lowercased() } ?? []
+        let path = url.path.lowercased()
+        return names.contains { name in markers.contains { name.contains($0) } }
+            || ["reset", "magic", "verify", "confirm", "invite", "login", "signin", "oauth"].contains { path.contains($0) }
     }
 
     /// Previews the first file that still exists; falls back to the list of paths.

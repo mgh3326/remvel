@@ -83,10 +83,11 @@ private struct SettingsView: View {
                 Toggle("Pause recording", isOn: $settings.paused)
                 Toggle("Ignore copies from other devices (Universal Clipboard)", isOn: $settings.ignoreRemoteClipboard)
                 Toggle("Hide Remvel from screen sharing and screenshots", isOn: $settings.hideFromScreenSharing)
+                Toggle("Show link previews", isOn: $settings.linkPreviews)
             } header: {
                 Text("Privacy")
             } footer: {
-                Text("Passwords that apps mark as concealed, such as from 1Password, are never recorded.")
+                Text("Passwords that apps mark as concealed, such as from 1Password, are never recorded. Link previews load a page only when you select its link, and never for links that look like sign-in, reset or token links.")
                     .foregroundStyle(.secondary)
             }
             Section("Ignored apps") {

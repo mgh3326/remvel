@@ -4,6 +4,10 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 
 ## 0.4.0
 
+- ⌘K opens the selected item's actions: paste, copy, pin, delete, and paste it changed — UPPERCASE, lowercase, Title Case, camelCase, snake_case, kebab-case, trimmed, joined, sorted or de-duplicated lines, formatted or minified JSON, URL and Base64 encoded or decoded. Right-click shows the same list.
+- Links show the page's title, site and image. The page is loaded only when you select the link, never for links that look like sign-in, reset or token links, and Settings → Privacy turns it off.
+- ⌘Y shows the preview across the whole popup; ↑↓ still move through the list.
+- Deleted rows fade out.
 - Runs on Intel Macs too (universal build).
 - `@safari` and the like in the search field filter by source app.
 - Settings → Privacy can hide the popup from screen sharing, recordings and screenshots.
