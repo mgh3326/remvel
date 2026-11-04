@@ -1,18 +1,47 @@
 import AppKit
 
 private final class Panel: NSPanel {
+    /// ⌘1–⌘9 paste the row with that number.
+    var onQuickPaste: ((Int) -> Void)?
+    var onSettings: (() -> Void)?
+
     override var canBecomeKey: Bool { true }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command, let key = event.charactersIgnoringModifiers {
+            if let digit = Int(key), (1...9).contains(digit) {
+                onQuickPaste?(digit - 1)
+                return true
+            }
+            if key == "," {
+                onSettings?()
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 /// The popup: search field, virtualized history table, preview pane.
 /// It is a non-activating panel so the app the user came from stays frontmost for pasting.
 final class PopupController: NSObject {
+    static let rowHeight: CGFloat = 30
+    static let quickPasteRows = 9
+    static let footer = "⏎ Paste   ⇧⏎ Plain text   ⌥⏎ Copy   ⌘-click Queue   ⌘1–9 Quick paste   #link #image #file"
+
+    /// Screen frame of the menu bar icon, for `PopupPosition.statusItem`.
+    var statusItemFrame: (() -> NSRect?)?
+
     private let model = HistoryModel()
     private let preview = PreviewController()
+    private let settings = Settings.shared
     private let panel: Panel
     private let searchField = NSSearchField()
     private let table = NSTableView()
     private let thumbnails = NSCache<NSNumber, NSImage>()
+    /// Items picked with ⌘-click, in the order they will be pasted.
+    private var queue: [Int64] = []
 
     override init() {
         panel = Panel(
@@ -27,6 +56,11 @@ final class PopupController: NSObject {
 
         model.onReload = { [weak self] in self?.reloadTable() }
         model.onRowsLoaded = { [weak self] rows in self?.rowsLoaded(rows) }
+        panel.onQuickPaste = { [weak self] row in self?.paste(rows: [row], mode: .original) }
+        panel.onSettings = { [weak self] in
+            self?.close()
+            SettingsWindow.shared.show()
+        }
     }
 
     func toggle() {
@@ -44,26 +78,52 @@ final class PopupController: NSObject {
 
     private func open() {
         searchField.stringValue = ""
+        queue = []
         model.setQuery("")
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        if let frame = screen?.visibleFrame {
-            panel.setFrameOrigin(NSPoint(
-                x: frame.midX - panel.frame.width / 2,
-                y: frame.midY - panel.frame.height / 2 + frame.height / 8
-            ))
-        }
+        panel.setFrameOrigin(origin(for: panel.frame.size))
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(searchField)
+    }
+
+    private func origin(for size: NSSize) -> NSPoint {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return .zero }
+        var origin: NSPoint
+        switch settings.popupPosition {
+        case .center:
+            origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2 + visible.height / 8)
+        case .cursor:
+            origin = NSPoint(x: mouse.x, y: mouse.y - size.height)
+        case .statusItem:
+            guard let icon = statusItemFrame?() else { return NSPoint(x: visible.midX - size.width / 2, y: visible.maxY - size.height) }
+            origin = NSPoint(x: icon.midX - size.width / 2, y: icon.minY - size.height - 4)
+        }
+        // Keep the whole panel on screen.
+        origin.x = min(max(origin.x, visible.minX), visible.maxX - size.width)
+        origin.y = min(max(origin.y, visible.minY), visible.maxY - size.height)
+        return origin
     }
 
     private func close() {
         panel.orderOut(nil)
     }
 
-    private func pasteSelected() {
-        guard let item = model.summary(at: table.selectedRow) else { return }
+    private func pasteSelected(mode: PasteMode) {
+        if queue.count > 1 {
+            let ids = queue
+            close()
+            Paster.paste(ids: ids, mode: mode)
+        } else {
+            paste(rows: [table.selectedRow], mode: mode)
+        }
+    }
+
+    private func paste(rows: [Int], mode: PasteMode) {
+        let ids = rows.compactMap { model.summary(at: $0)?.id }
+        guard !ids.isEmpty else { return }
         close()
-        Paster.paste(id: item.id)
+        Paster.paste(ids: ids, mode: mode)
     }
 
     // MARK: Layout
@@ -82,7 +142,7 @@ final class PopupController: NSObject {
         background.state = .active
         panel.contentView = background
 
-        searchField.placeholderString = "Search"
+        searchField.placeholderString = "Search  ·  #link #image #file to filter"
         searchField.delegate = self
         searchField.focusRingType = .none
 
@@ -94,7 +154,12 @@ final class PopupController: NSObject {
         let divider = NSBox()
         divider.boxType = .separator
 
-        for sub in [searchField, tableScroll, divider, preview.view] {
+        let footer = NSTextField(labelWithString: Self.footer)
+        footer.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        footer.textColor = .tertiaryLabelColor
+        footer.lineBreakMode = .byTruncatingTail
+
+        for sub in [searchField, tableScroll, divider, preview.view, footer] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             background.addSubview(sub)
         }
@@ -105,7 +170,7 @@ final class PopupController: NSObject {
 
             tableScroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
             tableScroll.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 6),
-            tableScroll.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -6),
+            tableScroll.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -6),
             tableScroll.widthAnchor.constraint(equalTo: background.widthAnchor, multiplier: 0.45),
 
             divider.topAnchor.constraint(equalTo: tableScroll.topAnchor),
@@ -116,6 +181,10 @@ final class PopupController: NSObject {
             preview.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 8),
             preview.view.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -10),
             preview.view.bottomAnchor.constraint(equalTo: tableScroll.bottomAnchor),
+
+            footer.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 14),
+            footer.trailingAnchor.constraint(lessThanOrEqualTo: background.trailingAnchor, constant: -14),
+            footer.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -8),
         ])
     }
 
@@ -123,10 +192,13 @@ final class PopupController: NSObject {
         let column = NSTableColumn(identifier: .init("item"))
         table.addTableColumn(column)
         table.headerView = nil
-        table.rowHeight = 26
+        table.rowHeight = Self.rowHeight
         table.style = .plain
         table.backgroundColor = .clear
         table.usesAutomaticRowHeights = false
+        table.allowsMultipleSelection = true
+        // Clicks select rows but typing, ⏎ and Esc keep going to the search field.
+        table.refusesFirstResponder = true
         table.dataSource = self
         table.delegate = self
         table.target = self
@@ -134,10 +206,11 @@ final class PopupController: NSObject {
     }
 
     @objc private func tableDoubleClicked() {
-        pasteSelected()
+        paste(rows: [table.clickedRow], mode: .original)
     }
 
     private func reloadTable() {
+        queue = []
         table.reloadData()
         if model.rowCount > 0 {
             select(row: 0)
@@ -159,11 +232,17 @@ final class PopupController: NSObject {
         table.scrollRowToVisible(row)
     }
 
-    private func thumbnail(for item: ItemSummary, in cell: NSTableCellView, row: Int) {
+    private func reloadVisibleRows() {
+        let visible = table.rows(in: table.visibleRect)
+        guard visible.length > 0 else { return }
+        table.reloadData(forRowIndexes: IndexSet(integersIn: visible.location ..< NSMaxRange(visible)),
+                         columnIndexes: IndexSet(integer: 0))
+    }
+
+    private func thumbnail(for item: ItemSummary, row: Int) -> NSImage? {
         let key = NSNumber(value: item.id)
         if let image = thumbnails.object(forKey: key) {
-            cell.imageView?.image = image
-            return
+            return image
         }
         Core.shared.run({ try $0.thumbnail(id: item.id) }) { [weak self] result in
             guard let self, case .success(let data?) = result, let image = NSImage(data: data) else { return }
@@ -172,6 +251,38 @@ final class PopupController: NSObject {
                 self.table.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
             }
         }
+        return nil
+    }
+
+    private func icon(for item: ItemSummary, row: Int) -> NSImage? {
+        if item.kind == "image", let thumbnail = thumbnail(for: item, row: row) {
+            return thumbnail
+        }
+        if let app = item.app, let icon = SourceApps.icon(app) {
+            return icon
+        }
+        let symbol = switch item.kind {
+        case "link": "link"
+        case "image": "photo"
+        case "files": "doc"
+        default: "text.alignleft"
+        }
+        return NSImage(systemSymbolName: symbol, accessibilityDescription: item.kind)
+    }
+
+    /// The queue position when queued, otherwise the ⌘-number for the first rows.
+    private func hint(for item: ItemSummary, row: Int) -> NSAttributedString {
+        if let position = queue.firstIndex(of: item.id) {
+            return NSAttributedString(string: "\(position + 1)", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold),
+                .foregroundColor: NSColor.controlAccentColor,
+            ])
+        }
+        guard row < Self.quickPasteRows else { return NSAttributedString() }
+        return NSAttributedString(string: "⌘\(row + 1)", attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ])
     }
 
     private func title(for item: ItemSummary, row: Int) -> NSAttributedString {
@@ -192,6 +303,45 @@ final class PopupController: NSObject {
     }
 }
 
+private final class HistoryCell: NSTableCellView {
+    let hint = NSTextField(labelWithString: "")
+
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+        let text = NSTextField(labelWithString: "")
+        text.lineBreakMode = .byTruncatingTail
+        text.maximumNumberOfLines = 1
+        text.usesSingleLineMode = true
+        text.cell?.wraps = false
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        hint.alignment = .right
+        hint.setContentCompressionResistancePriority(.required, for: .horizontal)
+        hint.setContentHuggingPriority(.required, for: .horizontal)
+        let image = NSImageView()
+        image.imageScaling = .scaleProportionallyUpOrDown
+        for sub in [image, text, hint] {
+            sub.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(sub)
+        }
+        textField = text
+        imageView = image
+        NSLayoutConstraint.activate([
+            image.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            image.centerYAnchor.constraint(equalTo: centerYAnchor),
+            image.widthAnchor.constraint(equalToConstant: 18),
+            image.heightAnchor.constraint(equalToConstant: 18),
+            text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 8),
+            text.centerYAnchor.constraint(equalTo: centerYAnchor),
+            hint.leadingAnchor.constraint(greaterThanOrEqualTo: text.trailingAnchor, constant: 8),
+            hint.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            hint.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
         model.rowCount
@@ -199,50 +349,33 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("cell")
-        let cell = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView ?? Self.makeCell(id)
-        cell.imageView?.image = nil
+        let cell = tableView.makeView(withIdentifier: id, owner: nil) as? HistoryCell ?? HistoryCell(identifier: id)
         guard let item = model.summary(at: row) else {
+            cell.imageView?.image = nil
             cell.textField?.stringValue = ""
+            cell.hint.stringValue = ""
             return cell
         }
+        cell.imageView?.image = icon(for: item, row: row)
         cell.textField?.attributedStringValue = title(for: item, row: row)
-        if item.kind == "image" {
-            thumbnail(for: item, in: cell, row: row)
-        }
+        cell.hint.attributedStringValue = hint(for: item, row: row)
         return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        preview.show(model.summary(at: table.selectedRow))
-    }
-
-    private static func makeCell(_ id: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-        let cell = NSTableCellView()
-        cell.identifier = id
-        let text = NSTextField(labelWithString: "")
-        text.lineBreakMode = .byTruncatingTail
-        text.maximumNumberOfLines = 1
-        text.usesSingleLineMode = true
-        text.cell?.wraps = false
-        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let image = NSImageView()
-        image.imageScaling = .scaleProportionallyDown
-        for sub in [image, text] {
-            sub.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(sub)
+        let selected = table.selectedRowIndexes
+        let hadQueue = !queue.isEmpty
+        if selected.count > 1 {
+            // Keep the click order: survivors stay in place, new picks go to the end.
+            let ids = selected.compactMap { model.summary(at: $0)?.id }
+            queue = queue.filter(ids.contains) + ids.filter { !queue.contains($0) }
+        } else {
+            queue = []
         }
-        cell.textField = text
-        cell.imageView = image
-        NSLayoutConstraint.activate([
-            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-            image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            image.widthAnchor.constraint(equalToConstant: 22),
-            image.heightAnchor.constraint(equalToConstant: 22),
-            text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 6),
-            text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-            text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-        return cell
+        if hadQueue || !queue.isEmpty {
+            reloadVisibleRows()
+        }
+        preview.show(model.summary(at: table.selectedRow))
     }
 }
 
@@ -257,10 +390,15 @@ extension PopupController: NSSearchFieldDelegate {
             select(row: table.selectedRow - 1)
         case #selector(NSResponder.moveDown(_:)):
             select(row: table.selectedRow + 1)
-        case #selector(NSResponder.insertNewline(_:)):
-            pasteSelected()
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+            let flags = NSApp.currentEvent?.modifierFlags ?? []
+            pasteSelected(mode: flags.contains(.option) ? .copyOnly : flags.contains(.shift) ? .plainText : .original)
         case #selector(NSResponder.cancelOperation(_:)):
-            close()
+            if queue.isEmpty {
+                close()
+            } else {
+                select(row: table.selectedRow)
+            }
         default:
             return false
         }

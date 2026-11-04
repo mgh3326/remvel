@@ -1,0 +1,94 @@
+import AppKit
+import Carbon.HIToolbox
+
+enum PopupPosition: String, CaseIterable, Identifiable {
+    case center, cursor, statusItem
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .center: "Center of screen"
+        case .cursor: "At mouse pointer"
+        case .statusItem: "Below menu bar icon"
+        }
+    }
+}
+
+/// A global shortcut, stored the way most Mac clipboard apps store it: Carbon key code and modifiers.
+struct KeyCombo: Codable, Equatable {
+    var carbonKeyCode: Int
+    var carbonModifiers: Int
+    /// What the key printed when it was recorded, e.g. "V".
+    var key: String
+
+    static let `default` = KeyCombo(carbonKeyCode: kVK_ANSI_V, carbonModifiers: optionKey | cmdKey, key: "V")
+
+    var label: String {
+        var text = ""
+        if carbonModifiers & controlKey != 0 { text += "⌃" }
+        if carbonModifiers & optionKey != 0 { text += "⌥" }
+        if carbonModifiers & shiftKey != 0 { text += "⇧" }
+        if carbonModifiers & cmdKey != 0 { text += "⌘" }
+        return text + key
+    }
+
+    init(carbonKeyCode: Int, carbonModifiers: Int, key: String) {
+        self.carbonKeyCode = carbonKeyCode
+        self.carbonModifiers = carbonModifiers
+        self.key = key
+    }
+
+    /// Nil unless the event has at least one of ⌘ ⌥ ⌃, so plain typing never becomes a global shortcut.
+    init?(event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        var modifiers = 0
+        if flags.contains(.command) { modifiers |= cmdKey }
+        if flags.contains(.option) { modifiers |= optionKey }
+        if flags.contains(.control) { modifiers |= controlKey }
+        if flags.contains(.shift) { modifiers |= shiftKey }
+        guard modifiers & (cmdKey | optionKey | controlKey) != 0,
+              let key = event.charactersIgnoringModifiers?.uppercased(), !key.isEmpty else { return nil }
+        self.init(carbonKeyCode: Int(event.keyCode), carbonModifiers: modifiers, key: key)
+    }
+}
+
+/// User preferences, backed by UserDefaults. Read from the main thread only.
+final class Settings: ObservableObject {
+    static let shared = Settings()
+
+    /// Apps whose copies are never recorded. Password managers that mark their copies
+    /// as concealed are skipped anyway; these are the ones that do not.
+    static let seededIgnoredApps = ["com.apple.keychainaccess", "com.apple.Passwords"]
+    static let historyLimits = [0, 1_000, 10_000, 100_000]
+
+    private let defaults = UserDefaults.standard
+
+    @Published var paused: Bool { didSet { defaults.set(paused, forKey: "paused") } }
+    @Published var ignoredApps: [String] { didSet { defaults.set(ignoredApps, forKey: "ignoredApps") } }
+    @Published var ignoreRemoteClipboard: Bool {
+        didSet { defaults.set(ignoreRemoteClipboard, forKey: "ignoreRemoteClipboard") }
+    }
+    @Published var popupPosition: PopupPosition {
+        didSet { defaults.set(popupPosition.rawValue, forKey: "popupPosition") }
+    }
+    /// 0 keeps everything.
+    @Published var historyLimit: Int { didSet { defaults.set(historyLimit, forKey: "historyLimit") } }
+    @Published var hotkey: KeyCombo {
+        didSet { defaults.set(try? JSONEncoder().encode(hotkey), forKey: "hotkey") }
+    }
+    var hasOnboarded: Bool {
+        get { defaults.bool(forKey: "hasOnboarded") }
+        set { defaults.set(newValue, forKey: "hasOnboarded") }
+    }
+
+    private init() {
+        paused = defaults.bool(forKey: "paused")
+        ignoredApps = defaults.stringArray(forKey: "ignoredApps") ?? Self.seededIgnoredApps
+        ignoreRemoteClipboard = defaults.bool(forKey: "ignoreRemoteClipboard")
+        popupPosition = defaults.string(forKey: "popupPosition").flatMap(PopupPosition.init) ?? .center
+        historyLimit = defaults.integer(forKey: "historyLimit")
+        hotkey = defaults.data(forKey: "hotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
+            ?? .default
+    }
+}

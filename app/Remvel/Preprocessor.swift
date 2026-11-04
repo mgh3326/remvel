@@ -33,6 +33,15 @@ enum Preprocessor {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
+    /// Reads the size from the image header without decoding pixels.
+    static func pixelSize(_ data: Data) -> CGSize? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
     private static func downsampledPNG(_ data: Data, maxPixels: Int) -> Data? {
         guard let image = downsampled(data, maxPixels: maxPixels) else { return nil }
         let out = NSMutableData()

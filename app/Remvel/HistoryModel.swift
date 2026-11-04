@@ -5,6 +5,14 @@ import Foundation
 final class HistoryModel {
     static let pageSize = 100
     static let searchLimit: UInt32 = 500
+    /// A kind filter with no text lists that kind newest first, up to this many.
+    static let filterLimit: UInt32 = 10_000
+
+    /// `#tag` words in the query and the item kinds they select.
+    static let kindTags: [String: String] = [
+        "text": "text", "link": "link", "url": "link", "rich": "rich",
+        "image": "image", "img": "image", "file": "files", "files": "files",
+    ]
 
     /// Row count or order changed; reload everything.
     var onReload: (() -> Void)?
@@ -34,12 +42,27 @@ final class HistoryModel {
         setQuery(query)
     }
 
+    /// Splits "#image cat" into kinds ["image"] and text "cat". Unknown tags stay in the text.
+    static func parse(_ query: String) -> (text: String, kinds: [String]) {
+        var kinds: [String] = []
+        var words: [Substring] = []
+        for word in query.split(separator: " ", omittingEmptySubsequences: true) {
+            if word.hasPrefix("#"), let kind = kindTags[word.dropFirst().lowercased()] {
+                if !kinds.contains(kind) { kinds.append(kind) }
+            } else {
+                words.append(word)
+            }
+        }
+        return (words.joined(separator: " "), kinds)
+    }
+
     func setQuery(_ newQuery: String) {
         query = newQuery
         generation += 1
         let gen = generation
+        let (text, kinds) = Self.parse(newQuery)
 
-        if newQuery.isEmpty {
+        if text.isEmpty, kinds.isEmpty {
             Core.shared.run({ $0.count() }) { [weak self] result in
                 guard let self, gen == self.generation, case .success(let count) = result else { return }
                 self.reset(count: Int(count), hits: nil)
@@ -48,10 +71,13 @@ final class HistoryModel {
         }
 
         Core.shared.run({ store in
+            if text.isEmpty {
+                return try store.search(query: "", mode: .exact, kinds: kinds, limit: Self.filterLimit)
+            }
             // Fuzzy over titles first, then substring matches anywhere in the full text.
-            var hits = try store.search(query: newQuery, mode: .fuzzy, limit: Self.searchLimit)
+            var hits = try store.search(query: text, mode: .fuzzy, kinds: kinds, limit: Self.searchLimit)
             let seen = Set(hits.map(\.id))
-            hits += try store.search(query: newQuery, mode: .exact, limit: Self.searchLimit)
+            hits += try store.search(query: text, mode: .exact, kinds: kinds, limit: Self.searchLimit)
                 .filter { !seen.contains($0.id) }
             return hits
         }) { [weak self] result in

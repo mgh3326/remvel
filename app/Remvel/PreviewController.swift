@@ -103,26 +103,32 @@ final class PreviewController: NSObject {
 
     private func loadImage(_ id: Int64) {
         let gen = generation
-        Core.shared.run({ store -> CGImage? in
-            guard let data = Preprocessor.imageData(try store.reps(id: id)) else { return nil }
-            return Preprocessor.downsampled(data, maxPixels: Self.imageMaxPixels)
+        Core.shared.run({ store -> (CGImage, CGSize)? in
+            guard let data = Preprocessor.imageData(try store.reps(id: id)),
+                  let image = Preprocessor.downsampled(data, maxPixels: Self.imageMaxPixels) else { return nil }
+            return (image, Preprocessor.pixelSize(data) ?? CGSize(width: image.width, height: image.height))
         }) { [weak self] result in
-            guard let self, gen == self.generation, case .success(let image?) = result else { return }
+            guard let self, gen == self.generation, case .success(let (image, size)?) = result else { return }
             self.imageView.image = NSImage(cgImage: image, size: .zero)
+            self.info.stringValue += " · \(Int(size.width))×\(Int(size.height)) px"
         }
     }
 
     private static func describe(_ item: ItemSummary) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(item.lastCopiedAt) / 1000)
         var parts = [date.formatted(date: .abbreviated, time: .shortened)]
+        if let app = item.app {
+            parts.append(SourceApps.name(app))
+        }
+        if item.charCount > 0 {
+            parts.append("\(item.charCount.formatted()) chars")
+            parts.append(item.lineCount == 1 ? "1 line" : "\(item.lineCount.formatted()) lines")
+        }
         if item.textBytes > 0 {
             parts.append(ByteCountFormatter.string(fromByteCount: item.textBytes, countStyle: .file))
         }
         if item.copyCount > 1 {
-            parts.append("×\(item.copyCount)")
-        }
-        if let app = item.app {
-            parts.append(app)
+            parts.append("copied \(item.copyCount)×")
         }
         return parts.joined(separator: " · ")
     }
