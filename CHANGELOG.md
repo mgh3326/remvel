@@ -4,7 +4,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 
 ## 0.4.0
 
-- ⌘K opens the selected item's actions: paste, copy, pin, delete, and paste it changed — UPPERCASE, lowercase, Title Case, camelCase, snake_case, kebab-case, trimmed, joined, sorted or de-duplicated lines, formatted or minified JSON, URL and Base64 encoded or decoded. Right-click shows the same list.
+- ⌘K opens the selected item's actions in a list inside the popup (type to filter, ↑↓, ⏎, Esc): paste, copy, pin, delete, and paste it changed — UPPERCASE, lowercase, Title Case, camelCase, snake_case, kebab-case, trimmed, joined, sorted or de-duplicated lines, formatted or minified JSON, URL and Base64 encoded or decoded. Right-click a row opens the same list.
 - Links show the page's title, site and image. The page is loaded only when you select the link, never for links that look like sign-in, reset or token links, and Settings → Privacy turns it off.
 - ⌘Y shows the preview across the whole popup; ↑↓ still move through the list.
 - Deleted rows fade out.
@@ -15,7 +15,6 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 - Settings → Privacy can hide the popup from screen sharing, recordings and screenshots.
 - Pin items with ⌥P: pinned items stay at the top of the history and are never trimmed.
 - Delete an item with ⌥⌫.
-- Right-click a row for Paste, Paste as Plain Text, Copy, Pin and Delete.
 - Text in copied images is recognized on your Mac (Apple Vision), so searches find the words in screenshots. ⇧⏎ on an image pastes its text. Settings → Search turns this off.
 - Two-letter searches, like most Korean words, also find text in images.
 - ⌘K, ⌘Y, ⌘A, ⌘C and the other shortcuts work while typing Korean or another non-Latin script.

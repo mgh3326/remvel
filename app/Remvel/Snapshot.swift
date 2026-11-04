@@ -3,7 +3,7 @@ import AppKit
 /// Renders the popup offscreen to a PNG with synthetic history, for reviewing the UI
 /// without opening a window or touching the user's data. Not part of normal use.
 ///
-///     Remvel --snapshot out.png --data-dir /tmp/remvel-snap [--state default|search|queue|expanded|link|large|files] [--dark]
+///     Remvel --snapshot out.png --data-dir /tmp/remvel-snap [--state default|search|queue|expanded|link|large|files|actions] [--dark]
 struct Snapshot {
     let output: URL
     let state: String
@@ -37,7 +37,7 @@ struct Snapshot {
             let query = ["search": "#image rvl", "link": "#link", "large": "#image", "files": "#files"][state] ?? ""
             let queueRows = state == "queue" ? [7, 1, 4] : []
             popup.prepareSnapshot(query: query, expanded: state == "expanded", large: state == "large",
-                                  queueRows: queueRows) { view in
+                                  actions: state == "actions", queueRows: queueRows) { view in
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
                 view.cacheDisplay(in: view.bounds, to: rep)
                 try! rep.representation(using: .png, properties: [:])!.write(to: output)

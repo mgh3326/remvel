@@ -92,8 +92,6 @@ final class PopupController: NSObject {
     static let maxFacetApps = 12
     /// Apps that `@name` in the search field and the sidebar can pick from.
     static let maxKnownApps: UInt32 = 500
-    /// Files of one item listed under Paste One File; the preview's tiles show all of them.
-    static let maxFileActions = 30
 
     /// Screen frame of the menu bar icon, for `PopupPosition.statusItem`.
     var statusItemFrame: (() -> NSRect?)?
@@ -108,7 +106,8 @@ final class PopupController: NSObject {
     private let sidebarButton = NSButton()
     private let listHeader = NSTextField(labelWithString: "History")
     private let listCount = NSTextField(labelWithString: "")
-    private let table = NSTableView()
+    private let table = HistoryTable()
+    private let actionPanel = ActionPanel()
     private let footer = NSTextField(labelWithString: "")
     private let sidebar = SidebarController()
     private var sidebarWidthConstraint: NSLayoutConstraint!
@@ -197,7 +196,7 @@ final class PopupController: NSObject {
     }
 
     /// For `Snapshot`: lays the panel out as `open()` would, without showing it or taking focus.
-    func prepareSnapshot(query: String, expanded: Bool, large: Bool = false, queueRows: [Int],
+    func prepareSnapshot(query: String, expanded: Bool, large: Bool = false, actions: Bool = false, queueRows: [Int],
                          then: @escaping (NSView) -> Void) {
         self.expanded = expanded
         setLargePreview(large)
@@ -211,6 +210,7 @@ final class PopupController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             for row in queueRows { self.toggleQueued(row: row) }
             if let last = queueRows.last { self.select(row: last) }
+            if actions { self.showActions() }
             // Link previews come from the network.
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 then(self.panel.contentView!)
@@ -219,6 +219,7 @@ final class PopupController: NSObject {
     }
 
     private func close() {
+        actionPanel.isHidden = true
         panel.orderOut(nil)
     }
 
@@ -354,47 +355,45 @@ final class PopupController: NSObject {
     // MARK: Actions (⌘K) and transforms
 
     /// The selected item's actions as a menu under its row; type to jump to one.
+    /// ⌘K: opens the action panel for the selected item, or closes it.
     private func showActions() {
-        let row = table.selectedRow
-        guard row >= 0, model.summary(at: row) != nil else { return }
-        let menu = NSMenu()
-        addActions(to: menu, row: row)
-        let rect = table.rect(ofRow: row)
-        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX + 36, y: rect.maxY), in: table)
+        guard actionPanel.isHidden else { return actionPanel.dismiss() }
+        let sections = actionSections(row: table.selectedRow)
+        guard !sections.isEmpty else { return }
+        actionPanel.show(sections)
     }
 
-    private func addActions(to menu: NSMenu, row: Int) {
-        guard let item = model.summary(at: row) else { return }
-        let add = { (title: String, key: String, modifiers: NSEvent.ModifierFlags, action: @escaping () -> Void) in
-            let menuItem = MenuAction(title: title, key: key, action: action)
-            menuItem.keyEquivalentModifierMask = modifiers
-            menu.addItem(menuItem)
+    /// What ⌘K and right-click offer for the item at `row`.
+    private func actionSections(row: Int) -> [ActionSection] {
+        guard let item = model.summary(at: row) else { return [] }
+        let action = { (title: String, hint: String, run: @escaping () -> Void) in ItemAction(title: title, hint: hint, run: run) }
+        var sections = [
+            ActionSection(title: nil, actions: [
+                action(item.kind == "files" ? "Paste Files" : "Paste", "⏎") { [weak self] in self?.paste(rows: [row], mode: .original) },
+                action(item.kind == "image" ? "Paste Text in Image" : item.kind == "files" ? "Paste Paths" : "Paste as Plain Text",
+                       "⇧⏎") { [weak self] in self?.paste(rows: [row], mode: .plainText) },
+                action("Copy", "⌥⏎") { [weak self] in self?.paste(rows: [row], mode: .copyOnly) },
+                action(largePreview ? "Smaller Preview" : "Larger Preview", "⌘Y") { [weak self] in
+                    self.map { $0.setLargePreview(!$0.largePreview) }
+                },
+                action(item.pin == nil ? "Pin" : "Unpin", "⌥P") { [weak self] in self?.togglePin(row: row) },
+                action("Delete", "⌥⌫") { [weak self] in self?.delete(row: row) },
+            ]),
+        ]
+        if item.kind == "files" {
+            // The preview has loaded the selected item's paths.
+            guard row == table.selectedRow, preview.filePaths.count > 1 else { return sections }
+            sections.append(ActionSection(title: "Paste One File", actions: preview.filePaths.map { path in
+                action((path as NSString).lastPathComponent, "") { [weak self] in self?.pasteFiles([path], ofRow: row) }
+            }))
+            return sections
         }
-        add("Paste", "\r", [], { [weak self] in self?.paste(rows: [row], mode: .original) })
-        add(item.kind == "image" ? "Paste Text in Image" : "Paste as Plain Text", "\r", .shift,
-            { [weak self] in self?.paste(rows: [row], mode: .plainText) })
-        add("Copy", "\r", .option, { [weak self] in self?.paste(rows: [row], mode: .copyOnly) })
-        add(largePreview ? "Smaller Preview" : "Larger Preview", "y", .command,
-            { [weak self] in self.map { $0.setLargePreview(!$0.largePreview) } })
-        menu.addItem(.separator())
-        add(item.pin == nil ? "Pin" : "Unpin", "p", .option, { [weak self] in self?.togglePin(row: row) })
-        add("Delete", "\u{8}", .option, { [weak self] in self?.delete(row: row) })
-        menu.addItem(.separator())
-        // The preview has loaded the selected item's paths; right-click on another row has none.
-        if item.kind == "files", row == table.selectedRow, preview.filePaths.count > 1 {
-            menu.addItem(.sectionHeader(title: "Paste One File"))
-            for path in preview.filePaths.prefix(Self.maxFileActions) {
-                add((path as NSString).lastPathComponent, "", [], { [weak self] in self?.pasteFiles([path], ofRow: row) })
-            }
-            return
-        }
-        menu.addItem(.sectionHeader(title: "Paste Changed"))
         for (index, group) in Transform.all.enumerated() {
-            if index > 0 { menu.addItem(.separator()) }
-            for transform in group {
-                add(transform.title, "", [], { [weak self] in self?.paste(id: item.id, transformedBy: transform) })
-            }
+            sections.append(ActionSection(title: index == 0 ? "Paste Changed" : nil, actions: group.map { transform in
+                action(transform.title, "") { [weak self] in self?.paste(id: item.id, transformedBy: transform) }
+            }))
         }
+        return sections
     }
 
     private func pasteFiles(_ paths: [String], ofRow row: Int) {
@@ -492,7 +491,7 @@ final class PopupController: NSObject {
 
         let views: [NSView] = [
             searchField, chips, filterButton, sidebarButton, sidebar.view, listHeader, listCount, tableScroll,
-            divider, preview.view, footerLine, footer, settingsHint,
+            divider, preview.view, footerLine, footer, settingsHint, actionPanel,
         ]
         for sub in views {
             sub.translatesAutoresizingMaskIntoConstraints = false
@@ -548,6 +547,8 @@ final class PopupController: NSObject {
             footerLine.leadingAnchor.constraint(equalTo: background.leadingAnchor),
             footerLine.trailingAnchor.constraint(equalTo: background.trailingAnchor),
             footerLine.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -40),
+            actionPanel.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
+            actionPanel.bottomAnchor.constraint(equalTo: footerLine.topAnchor, constant: -8),
             footer.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
             footer.centerYAnchor.constraint(equalTo: background.bottomAnchor, constant: -20),
             settingsHint.leadingAnchor.constraint(greaterThanOrEqualTo: footer.trailingAnchor, constant: 16),
@@ -576,9 +577,13 @@ final class PopupController: NSObject {
         table.target = self
         table.action = #selector(tableClicked)
         table.doubleAction = #selector(tableDoubleClicked)
-        let menu = NSMenu()
-        menu.delegate = self
-        table.menu = menu
+        table.onRightClick = { [weak self] row in
+            self?.select(row: row)
+            self?.actionPanel.dismiss()
+            self?.showActions()
+        }
+        actionPanel.isHidden = true
+        actionPanel.onClose = { [weak self] in self.map { $0.panel.makeFirstResponder($0.searchField) } }
     }
 
     @objc private func tableClicked() {
@@ -921,6 +926,8 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        // The open action panel acts on the row it was opened for.
+        actionPanel.dismiss()
         preview.show(model.summary(at: table.selectedRow))
         updateFooter()
     }
@@ -964,27 +971,17 @@ extension PopupController: NSSearchFieldDelegate {
     }
 }
 
-/// Right-click menu on a row: the keyboard actions, for people who reach for the mouse.
-extension PopupController: NSMenuDelegate {
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        addActions(to: menu, row: table.clickedRow)
-    }
-}
+/// Right-click opens the action panel on the clicked row. A system menu would take key focus from
+/// the popup, which closes it.
+private final class HistoryTable: NSTableView {
+    var onRightClick: ((Int) -> Void)?
 
-/// A menu item that runs a closure, for menus built on the fly.
-private final class MenuAction: NSMenuItem {
-    private let run: () -> Void
-
-    init(title: String, key: String, action: @escaping () -> Void) {
-        run = action
-        super.init(title: title, action: #selector(runAction), keyEquivalent: key)
-        target = self
+    override func rightMouseDown(with event: NSEvent) {
+        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        if row >= 0 { onRightClick?(row) }
     }
 
-    required init(coder: NSCoder) { fatalError() }
-
-    @objc private func runAction() { run() }
+    override func menu(for event: NSEvent) -> NSMenu? { nil }
 }
 
 extension PopupController: NSWindowDelegate {
