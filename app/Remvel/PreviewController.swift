@@ -1,33 +1,61 @@
 import AppKit
 import Quartz
 
-/// Shows one item. Text is read 64 KB at a time and appended as the user scrolls,
+/// Shows one item in a fixed card with its metadata pinned below.
+/// Text is read 64 KB at a time and appended as the user scrolls,
 /// so a 50 MB log costs the same to open as a one-liner.
+/// Nothing in here may change the panel's size: every label truncates and the image only scales down.
 final class PreviewController: NSObject {
     static let chunkBytes: Int64 = 64 * 1024
     static let imageMaxPixels = 1600
 
     let view = NSView()
 
+    private let header = NSTextField(labelWithString: "Preview")
+    private let kindLabel = NSTextField(labelWithString: "")
+    private let card = NSBox()
     private let textScroll = NSTextView.scrollableTextView()
     private var textView: NSTextView { textScroll.documentView as! NSTextView }
     private let imageView = NSImageView()
+    /// Pixel size under an image, or the colour's value under a swatch.
+    private let caption = NSTextField(labelWithString: "")
     /// Quick Look for copied files: documents, PDFs, videos, folders.
     private let fileView = QLPreviewView(frame: .zero, style: .compact)!
-    private let info = NSTextField(labelWithString: "")
+    private let meta = NSTextField(labelWithString: "")
 
     private var item: ItemSummary?
     private var nextOffset: Int64 = 0
     private var loadingChunk = false
     private var generation = 0
 
+    private static let shortDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMddHHmm")
+        return formatter
+    }()
+
     override init() {
         super.init()
+        for label in [header, kindLabel] {
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            label.textColor = .secondaryLabelColor
+        }
+        kindLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        kindLabel.alignment = .right
+
+        card.boxType = .custom
+        card.fillColor = .textBackgroundColor
+        card.borderColor = .separatorColor
+        card.borderWidth = 1
+        card.cornerRadius = 8
+        card.contentViewMargins = .zero
+        card.titlePosition = .noTitle
+
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        textView.textContainerInset = NSSize(width: 4, height: 6)
+        textView.font = .systemFont(ofSize: 13)
+        textView.textContainerInset = NSSize(width: 10, height: 10)
         textScroll.drawsBackground = false
         textScroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
@@ -35,59 +63,113 @@ final class PreviewController: NSObject {
         )
 
         imageView.imageScaling = .scaleProportionallyDown
-        info.textColor = .secondaryLabelColor
-        info.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        info.lineBreakMode = .byTruncatingTail
-        // Long info lines must truncate, not widen the panel.
-        info.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        caption.alignment = .center
         fileView.shouldCloseWithWindow = false
 
-        for sub in [textScroll, imageView, fileView, info] {
+        meta.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        meta.textColor = .secondaryLabelColor
+        for label in [header, kindLabel, caption, meta] {
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        caption.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        caption.textColor = .secondaryLabelColor
+        // A large image must shrink into the card, never push the card (and the panel) bigger.
+        for orientation in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
+            imageView.setContentCompressionResistancePriority(.defaultLow, for: orientation)
+            imageView.setContentHuggingPriority(.defaultLow, for: orientation)
+        }
+
+        let content = card.contentView!
+        for sub in [textScroll, imageView, caption, fileView] {
+            sub.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(sub)
+        }
+        for sub in [header, kindLabel, card, meta] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(sub)
         }
         NSLayoutConstraint.activate([
-            textScroll.topAnchor.constraint(equalTo: view.topAnchor),
-            textScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            textScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            textScroll.bottomAnchor.constraint(equalTo: info.topAnchor, constant: -6),
-            imageView.topAnchor.constraint(equalTo: textScroll.topAnchor),
-            imageView.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: textScroll.trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: textScroll.bottomAnchor),
-            fileView.topAnchor.constraint(equalTo: textScroll.topAnchor),
-            fileView.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor),
-            fileView.trailingAnchor.constraint(equalTo: textScroll.trailingAnchor),
-            fileView.bottomAnchor.constraint(equalTo: textScroll.bottomAnchor),
-            info.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
-            info.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
-            info.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -4),
+            header.topAnchor.constraint(equalTo: view.topAnchor),
+            header.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 2),
+            kindLabel.firstBaselineAnchor.constraint(equalTo: header.firstBaselineAnchor),
+            kindLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -2),
+            kindLabel.leadingAnchor.constraint(greaterThanOrEqualTo: header.trailingAnchor, constant: 8),
+
+            card.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            card.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: meta.topAnchor, constant: -8),
+
+            meta.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 2),
+            meta.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -2),
+            meta.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            textScroll.topAnchor.constraint(equalTo: content.topAnchor, constant: 2),
+            textScroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 2),
+            textScroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -2),
+            textScroll.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -2),
+
+            imageView.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
+            imageView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
+            imageView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
+            imageView.bottomAnchor.constraint(equalTo: caption.topAnchor, constant: -8),
+            caption.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
+            caption.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
+            caption.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
+
+            fileView.topAnchor.constraint(equalTo: content.topAnchor, constant: 1),
+            fileView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 1),
+            fileView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -1),
+            fileView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -1),
         ])
+        show(nil, force: true)
     }
 
-    func show(_ newItem: ItemSummary?) {
-        guard newItem?.id != item?.id else { return }
+    func show(_ newItem: ItemSummary?, force: Bool = false) {
+        guard force || newItem?.id != item?.id else { return }
         item = newItem
         generation += 1
         nextOffset = 0
         loadingChunk = false
         textView.string = ""
         imageView.image = nil
-        info.stringValue = newItem.map(Self.describe) ?? ""
-
+        caption.stringValue = ""
         fileView.previewItem = nil
-        fileView.isHidden = true
+        meta.stringValue = newItem.map(Self.describe) ?? ""
+        meta.toolTip = newItem.map(Self.fullDates)
+        kindLabel.stringValue = newItem.map { Kinds.info($0.kind).name } ?? ""
+
+        let kind = newItem?.kind ?? "text"
+        let visual = kind == "image" || kind == "color"
+        textScroll.isHidden = visual || kind == "files"
+        imageView.isHidden = !visual
+        caption.isHidden = !visual
+        fileView.isHidden = kind != "files"
+
         guard let newItem else { return }
-        let isImage = newItem.kind == "image"
-        textScroll.isHidden = isImage
-        imageView.isHidden = !isImage
-        if isImage {
-            loadImage(newItem.id)
-        } else if newItem.kind == "files" {
-            loadFiles(newItem.id)
-        } else {
-            loadNextChunk()
+        switch kind {
+        case "image": loadImage(newItem.id)
+        case "files": loadFiles(newItem.id)
+        case "color": showColor(newItem.title)
+        default: loadNextChunk()
         }
+    }
+
+    private func showColor(_ value: String) {
+        guard let color = Kinds.color(from: value) else {
+            imageView.isHidden = true
+            textScroll.isHidden = false
+            loadNextChunk()
+            return
+        }
+        imageView.image = Kinds.swatch(color, size: 160)
+        // Show the other notation than the one copied.
+        let rgb = color.usingColorSpace(.sRGB) ?? color
+        let (r, g, b) = (Int(rgb.redComponent * 255), Int(rgb.greenComponent * 255), Int(rgb.blueComponent * 255))
+        caption.stringValue = value.hasPrefix("#")
+            ? "rgb(\(r), \(g), \(b))"
+            : String(format: "#%02X%02X%02X", r, g, b)
     }
 
     /// Previews the first file that still exists; falls back to the list of paths.
@@ -96,19 +178,17 @@ final class PreviewController: NSObject {
         Core.shared.run({ try $0.previewText(id: id, byteOffset: 0, maxBytes: Self.chunkBytes) }) { [weak self] result in
             guard let self, gen == self.generation, case .success(let text) = result else { return }
             let paths = text.split(separator: "\n").map(String.init)
-            let existing = paths.filter { FileManager.default.fileExists(atPath: $0) }
-            guard let first = existing.first else {
-                self.info.stringValue += " · moved or deleted"
+            guard let first = paths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+                self.meta.stringValue += " · moved or deleted"
+                self.fileView.isHidden = true
+                self.textScroll.isHidden = false
                 self.loadNextChunk()
                 return
             }
-            if paths.count > 1 {
-                self.info.stringValue += " · showing \((first as NSString).lastPathComponent)"
-            } else {
-                self.info.stringValue += " · \((first as NSString).abbreviatingWithTildeInPath)"
-            }
-            self.textScroll.isHidden = true
-            self.fileView.isHidden = false
+            let shown = paths.count > 1
+                ? "showing \((first as NSString).lastPathComponent)"
+                : (first as NSString).abbreviatingWithTildeInPath
+            self.meta.stringValue += " · \(shown)"
             self.fileView.previewItem = URL(fileURLWithPath: first) as NSURL
         }
     }
@@ -131,9 +211,12 @@ final class PreviewController: NSObject {
             self.loadingChunk = false
             guard case .success(let chunk) = result, !chunk.isEmpty else { return }
             self.nextOffset = offset + Int64(chunk.utf8.count)
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineSpacing = 4
             self.textView.textStorage?.append(NSAttributedString(string: chunk, attributes: [
                 .font: self.textView.font as Any,
                 .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraph,
             ]))
         }
     }
@@ -147,33 +230,43 @@ final class PreviewController: NSObject {
         }) { [weak self] result in
             guard let self, gen == self.generation, case .success(let (image, size)?) = result else { return }
             self.imageView.image = NSImage(cgImage: image, size: .zero)
-            self.info.stringValue += " · \(Int(size.width))×\(Int(size.height)) px"
+            self.caption.stringValue = "\(Int(size.width)) × \(Int(size.height)) px"
         }
     }
 
+    /// App · First · Last · counts · copies, in that fixed order.
     private static func describe(_ item: ItemSummary) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(item.lastCopiedAt) / 1000)
-        var parts = [date.formatted(date: .abbreviated, time: .shortened)]
+        var parts: [String] = []
         if let app = item.app {
             parts.append(SourceApps.name(app))
         }
-        if item.kind == "files" {
+        parts.append("First \(shortDate.string(from: date(item.firstCopiedAt)))")
+        if item.lastCopiedAt != item.firstCopiedAt {
+            parts.append("Last \(shortDate.string(from: date(item.lastCopiedAt)))")
+        }
+        switch item.kind {
+        case "files":
             parts.append(item.lineCount == 1 ? "1 file" : "\(item.lineCount) files")
-            if item.copyCount > 1 {
-                parts.append("copied \(item.copyCount)×")
+        case "image", "color":
+            break
+        default:
+            if item.charCount > 0 {
+                parts.append("\(item.charCount.formatted()) chars / \(item.lineCount.formatted()) lines")
             }
-            return parts.joined(separator: " · ")
-        }
-        if item.charCount > 0 {
-            parts.append("\(item.charCount.formatted()) chars")
-            parts.append(item.lineCount == 1 ? "1 line" : "\(item.lineCount.formatted()) lines")
-        }
-        if item.textBytes > 0 {
-            parts.append(ByteCountFormatter.string(fromByteCount: item.textBytes, countStyle: .file))
         }
         if item.copyCount > 1 {
-            parts.append("copied \(item.copyCount)×")
+            parts.append("\(item.copyCount) copies")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private static func fullDates(_ item: ItemSummary) -> String {
+        let first = date(item.firstCopiedAt).formatted(date: .complete, time: .standard)
+        let last = date(item.lastCopiedAt).formatted(date: .complete, time: .standard)
+        return "First copied \(first)\nLast copied \(last)\nCopied or pasted \(item.copyCount) times"
+    }
+
+    private static func date(_ millis: Int64) -> Date {
+        Date(timeIntervalSince1970: TimeInterval(millis) / 1000)
     }
 }

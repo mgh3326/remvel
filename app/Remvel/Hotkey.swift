@@ -1,7 +1,6 @@
 import Carbon.HIToolbox
 
 /// Global hotkey via Carbon, the only API that works without Accessibility permission.
-/// Defaults to ⌥⌘V so it can run next to Maccy (⇧⌘C) while trying it out.
 final class Hotkey {
     private static var action: (() -> Void)?
     private var ref: EventHotKeyRef?
@@ -16,13 +15,15 @@ final class Hotkey {
     }
 
     /// Replaces the current shortcut; nil leaves none registered, e.g. while recording a new one.
-    func register(_ combo: KeyCombo?) {
+    /// Returns false when another app already holds the combination.
+    @discardableResult
+    func register(_ combo: KeyCombo?) -> Bool {
         if let ref { UnregisterEventHotKey(ref) }
         ref = nil
-        guard let combo else { return }
+        guard let combo else { return true }
         let id = EventHotKeyID(signature: OSType(0x524D_564C), id: 1) // "RMVL"
-        RegisterEventHotKey(UInt32(combo.carbonKeyCode), UInt32(combo.carbonModifiers), id,
-                            GetApplicationEventTarget(), 0, &ref)
+        return RegisterEventHotKey(UInt32(combo.carbonKeyCode), UInt32(combo.carbonModifiers), id,
+                                   GetApplicationEventTarget(), 0, &ref) == noErr
     }
 
     deinit {

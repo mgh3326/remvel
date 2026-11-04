@@ -2,6 +2,18 @@
 
 Each version's section becomes its GitHub release notes and is shown in Remvel's update prompt.
 
+## 0.3.0
+
+- The default shortcut is now ⇧⌘C, as in Maccy. Remvel warns when another app already holds the shortcut.
+- Redesigned popup with a fixed size (960 × 600): a counted history list, a preview card with the app, first and last copy time, counts, and copy count pinned below it, and a footer that shows what ⏎ does right now.
+- A large image no longer makes the popup grow.
+- Filter by kind or source app from the filter button, with removable chips.
+- Sidebar (⌥⌘S or the sidebar button) to browse by kind and app with counts.
+- Colours (#hex, rgb(), hsl()) are a kind of their own, with a swatch.
+- Images are titled with their size.
+- The ⌘-click queue keeps its order while you search or filter; Esc clears it first.
+- ⏎ while composing Korean (or any input method) finishes the character instead of pasting.
+
 ## 0.2.0
 
 - Settings window: shortcut, popup position, history limit, launch at login, Show in Dock, ignored apps.

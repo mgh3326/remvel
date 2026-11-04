@@ -37,7 +37,7 @@ An update is installed only if it is signed with the same certificate as the run
 
 ## Use
 
-Press **⌥⌘V** (changeable in Settings) to open the history.
+Press **⇧⌘C** (changeable in Settings) to open the history.
 
 | Key | Action |
 |---|---|
@@ -46,12 +46,15 @@ Press **⌥⌘V** (changeable in Settings) to open the history.
 | ⌥⏎ | Copy only, without pasting |
 | ⌘1–⌘9 | Paste the item with that number |
 | ⌘-click, then ⏎ | Paste several items in the order you picked them |
-| `#link` `#image` `#file` `#text` `#rich` | Filter by kind; combine with search text |
+| Esc | Clear the queue, then the search, then close |
+| ⌥⌘S | Show the sidebar: browse by kind and source app |
 | ⌘, | Settings |
+
+Filter with the filter button next to the search field, or type `#link` `#image` `#file` `#color` `#text` `#rich` along with search text.
 
 Pasting needs Accessibility permission; Remvel asks on first launch. Without it, Remvel only copies the item.
 
-The menu bar menu can pause recording. Settings has the shortcut, popup position, history limit, launch at login, ignored apps, and whether to record copies from other devices (Universal Clipboard). Passwords that apps mark as concealed are never recorded.
+The menu bar menu can pause recording. Settings has the shortcut, popup position, history limit, Show in Dock, launch at login, updates, ignored apps, and whether to record copies from other devices (Universal Clipboard). Passwords that apps mark as concealed are never recorded.
 
 ## Build
 

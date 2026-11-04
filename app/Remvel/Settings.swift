@@ -22,7 +22,8 @@ struct KeyCombo: Codable, Equatable {
     /// What the key printed when it was recorded, e.g. "V".
     var key: String
 
-    static let `default` = KeyCombo(carbonKeyCode: kVK_ANSI_V, carbonModifiers: optionKey | cmdKey, key: "V")
+    /// ⇧⌘C, the shortcut Maccy users already know.
+    static let `default` = KeyCombo(carbonKeyCode: kVK_ANSI_C, carbonModifiers: shiftKey | cmdKey, key: "C")
 
     var label: String {
         var text = ""

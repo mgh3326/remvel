@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var subscriptions: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let snapshot = Snapshot.requested {
+            snapshot.run(popup: popup)
+            return
+        }
         _ = Core.shared
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -25,8 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkey = Hotkey { [weak self] in self?.togglePopup() }
         settings.$hotkey.sink { [weak self] combo in
-            self?.hotkey?.register(combo)
-            self?.openItem?.title = "Open Remvel  \(combo.label)"
+            let ok = self?.hotkey?.register(combo) ?? false
+            self?.openItem?.title = ok ? "Open Remvel  \(combo.label)" : "Open Remvel  (\(combo.label) is taken)"
+            if !ok { Self.warnShortcutTaken(combo) }
         }.store(in: &subscriptions)
         settings.$showInDock.sink { show in
             NSApp.setActivationPolicy(show ? .regular : .accessory)
@@ -61,6 +66,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             updater.check { release in release.map(updater.install) }
         } else {
             updater.start()
+        }
+    }
+
+    private static func warnShortcutTaken(_ combo: KeyCombo) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "\(combo.label) is used by another app"
+            alert.informativeText = """
+                Remvel could not register \(combo.label). Quit the other app that uses it (for example Maccy), \
+                or choose a different shortcut in Remvel Settings.
+                """
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertFirstButtonReturn {
+                SettingsWindow.shared.show()
+            }
         }
     }
 

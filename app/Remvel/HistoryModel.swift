@@ -8,12 +8,6 @@ final class HistoryModel {
     /// A kind filter with no text lists that kind newest first, up to this many.
     static let filterLimit: UInt32 = 10_000
 
-    /// `#tag` words in the query and the item kinds they select.
-    static let kindTags: [String: String] = [
-        "text": "text", "link": "link", "url": "link", "rich": "rich",
-        "image": "image", "img": "image", "file": "files", "files": "files",
-    ]
-
     /// Row count or order changed; reload everything.
     var onReload: (() -> Void)?
     /// Summaries for these rows arrived.
@@ -21,6 +15,12 @@ final class HistoryModel {
 
     private(set) var rowCount = 0
     private(set) var query = ""
+    /// Chosen in the filter menu or sidebar; `#tags` typed in the query add to it.
+    var filter = Filter(kinds: [], apps: []) {
+        didSet { refresh() }
+    }
+    /// True when rows are search or filter results rather than the whole history.
+    var isFiltered: Bool { hits != nil }
     private var hits: [SearchHit]?
     private var rows: [Int: ItemSummary] = [:]
     private var requestedPages: Set<Int> = []
@@ -47,7 +47,7 @@ final class HistoryModel {
         var kinds: [String] = []
         var words: [Substring] = []
         for word in query.split(separator: " ", omittingEmptySubsequences: true) {
-            if word.hasPrefix("#"), let kind = kindTags[word.dropFirst().lowercased()] {
+            if word.hasPrefix("#"), let kind = Kinds.tags[word.dropFirst().lowercased()] {
                 if !kinds.contains(kind) { kinds.append(kind) }
             } else {
                 words.append(word)
@@ -60,9 +60,10 @@ final class HistoryModel {
         query = newQuery
         generation += 1
         let gen = generation
-        let (text, kinds) = Self.parse(newQuery)
+        let (text, typedKinds) = Self.parse(newQuery)
+        let filter = Filter(kinds: Array(Set(filter.kinds + typedKinds)), apps: filter.apps)
 
-        if text.isEmpty, kinds.isEmpty {
+        if text.isEmpty, filter.kinds.isEmpty, filter.apps.isEmpty {
             Core.shared.run({ $0.count() }) { [weak self] result in
                 guard let self, gen == self.generation, case .success(let count) = result else { return }
                 self.reset(count: Int(count), hits: nil)
@@ -72,12 +73,12 @@ final class HistoryModel {
 
         Core.shared.run({ store in
             if text.isEmpty {
-                return try store.search(query: "", mode: .exact, kinds: kinds, limit: Self.filterLimit)
+                return try store.search(query: "", mode: .exact, filter: filter, limit: Self.filterLimit)
             }
             // Fuzzy over titles first, then substring matches anywhere in the full text.
-            var hits = try store.search(query: text, mode: .fuzzy, kinds: kinds, limit: Self.searchLimit)
+            var hits = try store.search(query: text, mode: .fuzzy, filter: filter, limit: Self.searchLimit)
             let seen = Set(hits.map(\.id))
-            hits += try store.search(query: text, mode: .exact, kinds: kinds, limit: Self.searchLimit)
+            hits += try store.search(query: text, mode: .exact, filter: filter, limit: Self.searchLimit)
                 .filter { !seen.contains($0.id) }
             return hits
         }) { [weak self] result in

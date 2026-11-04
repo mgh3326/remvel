@@ -9,7 +9,8 @@ final class Core {
     private let queue = DispatchQueue(label: "remvel.core", qos: .userInitiated)
 
     private init() {
-        let dir = URL.applicationSupportDirectory.appending(path: "Remvel", directoryHint: .isDirectory)
+        let dir = Snapshot.dataDirectory
+            ?? URL.applicationSupportDirectory.appending(path: "Remvel", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         do {
             store = try Remvel.open(path: dir.appending(path: "remvel.sqlite").path)

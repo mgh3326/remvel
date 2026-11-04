@@ -14,6 +14,7 @@ enum Preprocessor {
             app: app,
             derivedText: derivedText(reps),
             thumbnailPng: imageData(reps).flatMap { downsampledPNG($0, maxPixels: thumbnailMaxPixels) },
+            title: imageData(reps).flatMap(pixelSize).map { "Image \(Int($0.width)) × \(Int($0.height))" },
             copiedAt: copiedAt
         )
     }
