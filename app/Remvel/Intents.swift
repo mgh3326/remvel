@@ -102,11 +102,7 @@ struct ClipboardItemTextIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
         let id = Int64(item.id)
-        let text = try await core { store -> String in
-            let own = (try? store.previewText(id: id, byteOffset: 0, maxBytes: 1 << 40)) ?? ""
-            return own.isEmpty ? (try store.recognizedText(id: id)) ?? "" : own
-        }
-        return .result(value: text)
+        return .result(value: try await core { try $0.fullText(id: id) })
     }
 }
 
@@ -177,16 +173,13 @@ private func core<T>(_ work: @escaping (Remvel) throws -> T) async throws -> T {
     }
 }
 
-/// The popup's search: fuzzy over titles, then substring anywhere in text and image text.
+/// The popup's search, in the popup's order: `#tags` filter, the core ranks.
 private func search(_ query: String, limit: Int) async throws -> [ClipboardItem] {
     let (text, kinds) = HistoryModel.parse(query)
     let filter = Filter(kinds: kinds, apps: [])
-    let limit = UInt32(limit)
     let summaries = try await core { store -> [ItemSummary] in
-        var hits = try store.search(query: text, mode: .fuzzy, filter: filter, limit: limit)
-        let seen = Set(hits.map(\.id))
-        hits += try store.search(query: text, mode: .exact, filter: filter, limit: limit).filter { !seen.contains($0.id) }
-        return try store.summaries(ids: Array(hits.prefix(Int(limit)).map(\.id)))
+        let hits = try store.search(query: text, filter: filter, limit: UInt32(limit))
+        return try store.summaries(ids: hits.map(\.id))
     }
     return summaries.map(ClipboardItem.init)
 }

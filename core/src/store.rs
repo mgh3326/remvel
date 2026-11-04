@@ -2,10 +2,14 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::search::TitleIndex;
+use crate::search::{Entry, TitleIndex};
 use crate::{Error, Result, schema};
 
 const TITLE_MAX_CHARS: usize = 300;
+
+/// The columns `summary_from_row` reads, in its order.
+const SUMMARY_COLUMNS: &str =
+    "id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count, first_copied_at";
 
 /// Pasteboard types that change on every copy and must not affect identity.
 const TRANSIENT_UTIS: &[&str] = &[
@@ -100,11 +104,13 @@ impl Store {
     }
 
     fn reload_titles(&mut self) -> Result<()> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, title, kind, app FROM items ORDER BY last_copied_at DESC")?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
-        self.titles = TitleIndex::from_rows(rows.collect::<rusqlite::Result<_>>()?);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, kind, app, last_copied_at, pin FROM items ORDER BY last_copied_at DESC, id DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Entry::new(r.get(0)?, r.get(1)?, &r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?.as_deref(), r.get(4)?, r.get::<_, Option<String>>(5)?.as_deref()))
+        })?;
+        self.titles = TitleIndex::from_entries(rows.collect::<rusqlite::Result<_>>()?);
         Ok(())
     }
 
@@ -122,7 +128,7 @@ impl Store {
                 params![id, capture.copied_at, capture.app],
             )?;
             tx.commit()?;
-            self.titles.touch(id, capture.app.as_deref());
+            self.titles.touch(id, capture.copied_at, capture.app.as_deref());
             return Ok(IngestResult { id, deduplicated: true });
         }
 
@@ -159,7 +165,7 @@ impl Store {
         }
         tx.commit()?;
 
-        self.titles.push_front(id, title, kind, capture.app.as_deref());
+        self.titles.insert(Entry::new(id, title, kind, capture.app.as_deref(), capture.copied_at, None));
         Ok(IngestResult { id, deduplicated: false })
     }
 
@@ -172,12 +178,12 @@ impl Store {
         if changed == 0 {
             return Err(Error::NotFound(id));
         }
-        self.titles.touch(id, None);
+        self.titles.touch(id, at, None);
         Ok(())
     }
 
-    /// One page of list rows: pinned items first in pin order, then the rest newest first.
-    /// Never reads payload tables.
+    /// One page of the browse order (see `search`): pinned items first in pin order,
+    /// then the rest newest first. Never reads payload tables.
     pub fn list(&self, offset: i64, limit: i64) -> Result<Vec<ItemSummary>> {
         let pinned = self.pinned()?;
         let pinned_count = pinned.len() as i64;
@@ -186,10 +192,10 @@ impl Store {
         let remaining = limit - out.len() as i64;
         if remaining > 0 {
             // Without INDEXED BY, SQLite reads every unpinned row through the pin index and sorts them.
-            let mut stmt = self.conn.prepare_cached(
-                "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count, first_copied_at
-                 FROM items INDEXED BY items_recent WHERE pin IS NULL ORDER BY last_copied_at DESC LIMIT ?1 OFFSET ?2",
-            )?;
+            let mut stmt = self.conn.prepare_cached(&format!(
+                "SELECT {SUMMARY_COLUMNS} FROM items INDEXED BY items_recent
+                 WHERE pin IS NULL ORDER BY last_copied_at DESC, id DESC LIMIT ?1 OFFSET ?2"
+            ))?;
             let rows = stmt.query_map(params![remaining, (offset - pinned_count).max(0)], summary_from_row)?;
             out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
         }
@@ -198,19 +204,14 @@ impl Store {
 
     /// Pinned items, in the order of their pin values.
     pub fn pinned(&self) -> Result<Vec<ItemSummary>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count, first_copied_at
-             FROM items WHERE pin IS NOT NULL ORDER BY pin",
-        )?;
+        let mut stmt =
+            self.conn.prepare_cached(&format!("SELECT {SUMMARY_COLUMNS} FROM items WHERE pin IS NOT NULL ORDER BY pin"))?;
         let rows = stmt.query_map([], summary_from_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn summaries(&self, ids: &[i64]) -> Result<Vec<ItemSummary>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count, first_copied_at
-             FROM items WHERE id = ?1",
-        )?;
+        let mut stmt = self.conn.prepare_cached(&format!("SELECT {SUMMARY_COLUMNS} FROM items WHERE id = ?1"))?;
         // Ids deleted since the caller got them are skipped, not an error.
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
@@ -259,8 +260,13 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Pins sort as strings, so callers pass fixed-width values (the app uses zero-padded milliseconds).
     pub fn set_pin(&mut self, id: i64, pin: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE items SET pin = ?2 WHERE id = ?1", params![id, pin])?;
+        let changed = self.conn.execute("UPDATE items SET pin = ?2 WHERE id = ?1", params![id, pin])?;
+        if changed == 0 {
+            return Err(Error::NotFound(id));
+        }
+        self.titles.set_pin(id, pin);
         Ok(())
     }
 
@@ -287,6 +293,22 @@ impl Store {
         Ok(())
     }
 
+    /// Everything readable in an item: its own text (file paths for files, extracted text for
+    /// rich-only copies) or, for images, the text recognized in them. Empty when there is neither.
+    pub fn full_text(&self, id: i64) -> Result<String> {
+        let found: Option<(Option<String>, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT (SELECT body FROM item_text WHERE item_id = ?1), (SELECT body FROM item_ocr WHERE item_id = ?1)
+                 FROM items WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let (own, recognized) = found.ok_or(Error::NotFound(id))?;
+        Ok(own.filter(|t| !t.is_empty()).or(recognized).unwrap_or_default())
+    }
+
     pub fn recognized_text(&self, id: i64) -> Result<Option<String>> {
         Ok(self
             .conn
@@ -307,7 +329,9 @@ impl Store {
     pub fn delete(&mut self, id: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM item_fts WHERE rowid = ?1", [id])?;
-        tx.execute("DELETE FROM items WHERE id = ?1", [id])?;
+        if tx.execute("DELETE FROM items WHERE id = ?1", [id])? == 0 {
+            return Err(Error::NotFound(id));
+        }
         tx.commit()?;
         self.titles.remove(id);
         Ok(())
@@ -317,7 +341,7 @@ impl Store {
     pub fn trim(&mut self, max_items: i64) -> Result<usize> {
         let tx = self.conn.transaction()?;
         let doomed = "SELECT id FROM items WHERE pin IS NULL
-                      ORDER BY last_copied_at DESC LIMIT -1 OFFSET ?1";
+                      ORDER BY last_copied_at DESC, id DESC LIMIT -1 OFFSET ?1";
         tx.execute(&format!("DELETE FROM item_fts WHERE rowid IN ({doomed})"), [max_items])?;
         let removed = tx.execute(&format!("DELETE FROM items WHERE id IN ({doomed})"), [max_items])?;
         tx.commit()?;
@@ -355,8 +379,8 @@ impl Store {
         &self.conn
     }
 
-    pub(crate) fn titles_mut(&mut self) -> &mut TitleIndex {
-        &mut self.titles
+    pub(crate) fn titles(&self) -> &TitleIndex {
+        &self.titles
     }
 }
 
@@ -591,7 +615,7 @@ mod tests {
         let id = store.ingest(capture).unwrap().id;
         let row = &store.list(0, 1).unwrap()[0];
         assert_eq!((row.kind.as_str(), row.title.as_str(), row.line_count), ("files", "a.csv, b.png", 2));
-        assert_eq!(store.search("Pictures", crate::SearchMode::Exact, &crate::Filter::default(), 10).unwrap()[0].id, id);
+        assert_eq!(store.search("Pictures", &crate::Filter::default(), 10).unwrap()[0].id, id);
 
         assert_eq!(store.thumbnail(id).unwrap(), None);
         store.set_thumbnail(id, b"png").unwrap();
@@ -631,6 +655,22 @@ mod tests {
             Facet { name: "com.apple.Terminal".into(), count: 4 },
             Facet { name: "com.apple.Safari".into(), count: 1 },
         ]);
+    }
+
+    #[test]
+    fn full_text_prefers_own_text_and_reports_missing_items() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.ingest(text("own words", 1)).unwrap().id;
+        store.set_recognized_text(id, "ignored").unwrap();
+        assert_eq!(store.full_text(id).unwrap(), "own words");
+        assert!(matches!(store.full_text(999), Err(Error::NotFound(999))));
+    }
+
+    #[test]
+    fn writes_to_missing_items_are_not_found() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert!(matches!(store.set_pin(7, Some("1")), Err(Error::NotFound(7))));
+        assert!(matches!(store.delete(7), Err(Error::NotFound(7))));
     }
 
     #[test]
@@ -697,7 +737,7 @@ mod tests {
 
     #[test]
     fn recognized_text_is_searchable_and_marks_images_done() {
-        use crate::{Filter, SearchMode};
+        use crate::Filter;
         let mut store = Store::open_in_memory().unwrap();
         let image = |data: u8, at| Capture {
             reps: vec![Rep { uti: "public.png".into(), data: vec![data] }],
@@ -714,13 +754,15 @@ mod tests {
         store.set_recognized_text(b, "").unwrap();
         assert!(store.unrecognized_images(10).unwrap().is_empty());
         assert_eq!(store.recognized_text(a).unwrap().as_deref(), Some("PastePal 모든 항목 휴지통"));
+        assert_eq!(store.full_text(a).unwrap(), "PastePal 모든 항목 휴지통");
+        assert_eq!(store.full_text(b).unwrap(), "");
 
         let ids = |store: &mut Store, q| -> Vec<i64> {
-            store.search(q, SearchMode::Exact, &Filter::default(), 10).unwrap().into_iter().map(|h| h.id).collect()
+            store.search(q, &Filter::default(), 10).unwrap().into_iter().map(|h| h.id).collect()
         };
         assert_eq!(ids(&mut store, "휴지통").len(), 2);
         let images = Filter { kinds: vec!["image".into()], apps: vec![] };
-        assert_eq!(store.search("휴지통", SearchMode::Exact, &images, 10).unwrap()[0].id, a);
+        assert_eq!(store.search("휴지통", &images, 10).unwrap()[0].id, a);
         // Recognizing again replaces, not appends.
         store.set_recognized_text(a, "other words").unwrap();
         assert!(ids(&mut store, "휴지통").iter().all(|&id| id != a));

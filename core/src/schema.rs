@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS items (
     copy_count      INTEGER NOT NULL DEFAULT 1,
     pin             TEXT UNIQUE
 );
-CREATE INDEX IF NOT EXISTS items_recent ON items(last_copied_at DESC);
+-- Browse order. Ties on the time break by id so every view agrees (see search.rs).
+CREATE INDEX IF NOT EXISTS items_recent ON items(last_copied_at DESC, id DESC);
 
 -- Raw pasteboard representations, read only when pasting.
 CREATE TABLE IF NOT EXISTS reps (
@@ -56,6 +57,9 @@ const MIGRATIONS: &[&str] = &[
          item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
          body    TEXT NOT NULL
      );",
+    // 3: break ties on copy time by id, so equal times have one order everywhere.
+    "DROP INDEX items_recent;
+     CREATE INDEX items_recent ON items(last_copied_at DESC, id DESC);",
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {

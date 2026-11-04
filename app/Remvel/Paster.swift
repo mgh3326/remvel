@@ -56,9 +56,8 @@ enum Paster {
         }
         // Rich-only items: the core keeps their extracted text. Images: the text found in them.
         // Items with neither paste as they are.
-        let text = (try? store.previewText(id: id, byteOffset: 0, maxBytes: 1 << 40)) ?? ""
-        let found = text.isEmpty ? (try store.recognizedText(id: id)) ?? "" : text
-        return found.isEmpty ? reps : [Rep(uti: plain, data: Data(found.utf8))]
+        let text = try store.fullText(id: id)
+        return text.isEmpty ? reps : [Rep(uti: plain, data: Data(text.utf8))]
     }
 
     private static func write(_ reps: [Rep]) {
