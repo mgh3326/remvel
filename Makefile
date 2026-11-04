@@ -1,6 +1,8 @@
 CORE := core
 APP := app
 LIB := $(CORE)/target/release/libremvel_core.a
+# Must match deploymentTarget in app/project.yml.
+export MACOSX_DEPLOYMENT_TARGET := 14.0
 
 .PHONY: all core bindings app test run clean
 

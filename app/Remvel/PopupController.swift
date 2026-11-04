@@ -221,7 +221,10 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
         cell.identifier = id
         let text = NSTextField(labelWithString: "")
         text.lineBreakMode = .byTruncatingTail
-        text.cell?.truncatesLastVisibleLine = true
+        text.maximumNumberOfLines = 1
+        text.usesSingleLineMode = true
+        text.cell?.wraps = false
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let image = NSImageView()
         image.imageScaling = .scaleProportionallyDown
         for sub in [image, text] {
