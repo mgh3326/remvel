@@ -36,3 +36,11 @@ core/   Rust: storage, ingest, search, preview (UniFFI)
 app/    Swift/AppKit menu bar app (XcodeGen project.yml)
 docs/   references and notes
 ```
+
+## License
+
+Remvel is licensed under the [GNU General Public License v3.0](LICENSE).
+
+The name "Remvel" and its icon are not covered by the license. Forks must use a different name and icon.
+
+Contributions require agreeing that the maintainer may also distribute them under other terms (for example, through the Mac App Store). This will be formalized as a CLA before the first outside contribution is merged.
