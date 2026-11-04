@@ -15,7 +15,7 @@ jobs:
     # The app icon is an Icon Composer document, which needs Xcode 26 or later.
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -35,7 +35,7 @@ jobs:
           ditto -c -k --keepParent build/Build/Products/Release/Remvel.app Remvel.zip
           shasum -a 256 Remvel.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Remvel-${{ github.sha }}
           path: Remvel.zip
