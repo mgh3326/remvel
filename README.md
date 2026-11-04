@@ -1,5 +1,7 @@
 # Remvel
 
+[![Build](https://github.com/mgh3326/remvel/actions/workflows/build.yml/badge.svg)](https://github.com/mgh3326/remvel/actions/workflows/build.yml)
+
 A fast clipboard history manager for macOS that stays fast with a very large history.
 
 Remvel (*rem*ember + *vel*ocity) keeps tens of thousands of clips and still opens, searches, and previews them instantly.
@@ -18,6 +20,8 @@ Remvel does the expensive work once, in the background, when you copy:
 
 On 100,000 items, a list page takes 0.03 ms, fuzzy search about 19 ms, and full-text search about 20 ms (Apple M1 Pro, synthetic data). See [DESIGN.md](DESIGN.md).
 
+macOS 26 added a clipboard history to Spotlight. Remvel is for when that is not enough: unlimited history, full-text search that finds Korean and other CJK text anywhere in a clip, and no telemetry. Everything stays in one local SQLite file.
+
 ## Build
 
 Requirements: macOS 14+, Xcode, Rust (stable), [XcodeGen](https://github.com/yonaskolb/XcodeGen).
@@ -27,7 +31,25 @@ make run     # build core + app and launch
 make test    # core tests
 ```
 
-Press **⌥⌘V** to open the history. **Enter** pastes the selected item. Pasting needs Accessibility permission; without it, Remvel only copies the item.
+CI builds every push to `main`; the app is attached to each run as `Remvel.zip`. It is ad-hoc signed, so on first launch right-click it and choose **Open**.
+
+## Use
+
+Press **⌥⌘V** (changeable in Settings) to open the history.
+
+| Key | Action |
+|---|---|
+| ⏎ | Paste the selected item |
+| ⇧⏎ | Paste as plain text |
+| ⌥⏎ | Copy only, without pasting |
+| ⌘1–⌘9 | Paste the item with that number |
+| ⌘-click, then ⏎ | Paste several items in the order you picked them |
+| `#link` `#image` `#file` `#text` `#rich` | Filter by kind; combine with search text |
+| ⌘, | Settings |
+
+Pasting needs Accessibility permission; Remvel asks on first launch. Without it, Remvel only copies the item.
+
+The menu bar menu can pause recording. Settings has the shortcut, popup position, history limit, launch at login, ignored apps, and whether to record copies from other devices (Universal Clipboard). Passwords that apps mark as concealed are never recorded.
 
 ## Layout
 
