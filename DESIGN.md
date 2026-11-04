@@ -22,7 +22,7 @@
 │ PreviewView        NSTextView, 64KB씩 이어 로드 │
 │ Paster             CGEvent ⌘V                  │
 └──────────────┬────────────────────────────────┘
-               │ UniFFI (예정)
+               │ UniFFI       
 ┌──────────────▼──── Rust (core/) ──────────────┐
 │ Store    rusqlite, WAL, 메타와 payload 테이블 분리 │
 │ ingest   blake3 해시 중복 제거, 제목, HTML→text  │
@@ -43,7 +43,20 @@ AppKit이 필요한 일(NSPasteboard 읽기, RTF 파싱, 이미지 다운샘플�
 | `reps` | 원본 UTI별 blob | 붙여넣기 |
 | `item_text` | 전체 plain text | 미리보기 (범위 읽기) |
 | `thumbnails` | 작은 PNG | 이미지 행 표시 |
-| `item_fts` | FTS5 trigram, contentless | Exact 검색 |
+| `item_ocr` | 이미지에서 인식한 텍스트 | 검색, 이미지 텍스트 붙여넣기 |
+| `item_fts` | FTS5 trigram, contentless (본문 + 인식 텍스트) | Exact 검색 |
+
+## 정렬 규칙 (`core/src/search.rs`)
+
+팝업, 필터, 사이드바, Shortcuts가 모두 코어의 `search` 하나로 순서를 받는다. Swift는 결과를 다시 정렬하거나 합치지 않는다.
+
+| 화면 | 순서 |
+|---|---|
+| 검색어 없음 (전체 목록, `#image` 같은 필터, 사이드바) | 핀이 맨 위(핀 값 순), 그다음 최신순. `list()`와 같다. |
+| 검색어 있음 | 핀 우선 없음. fuzzy 제목 점수순, 그다음 fuzzy가 못 찾은 전문 일치. 같은 점수와 전문 일치는 최신순. 핀은 배지로만 표시한다. |
+
+"최신순"은 어디서나 `last_copied_at DESC, id DESC`다. 같은 밀리초에 복사하거나 붙여넣은 항목도 목록, 필터, 검색, 재실행 후에 순서가 같다.
+Exact 검색은 3글자 이상이면 FTS5로 본문과 인식 텍스트를, 그보다 짧으면 제목만 찾는다(trigram 한계).
 
 ## 측정 (2026-11-04, `cargo run --release --example scale -- N`)
 
@@ -73,30 +86,31 @@ AppKit이 필요한 일(NSPasteboard 읽기, RTF 파싱, 이미지 다운샘플�
 
 측정 방법: Maccy 저장소에 Swift Testing 벤치를 붙여 `History.load()`, `Search`, 미리보기 경로를 시나리오별로 반복 측정했다(Debug + `-O`, warm cache).
 
-## 현재 상태 (v0.2)
+## 현재 상태 (v0.4)
 
 - `core/`: 저장, 중복 제거, 검색, 미리보기 범위 읽기. UniFFI로 `Remvel` 객체를 노출한다.
   - 스키마 버전은 `PRAGMA user_version`으로 관리한다(`schema.rs`의 `MIGRATIONS`, 추가만 한다).
-  - 종류: text, link(URL 한 줄), rich, image, files. 검색은 종류 필터를 받는다.
+  - 종류: text, link(URL 한 줄), color, rich, image, files. 검색은 종류와 앱 필터를 받는다.
+  - 이미지 속 텍스트는 Vision으로 별도 프로세스에서 인식해 `item_ocr`에 저장하고 검색에 넣는다.
   - 글자 수와 줄 수는 저장할 때 한 번 계산한다.
 - `app/`: 메뉴바 앱.
   - 팝업: 가상화 목록(행 30pt, 복사한 앱 아이콘, ⌘1–9 힌트), fuzzy와 전문 검색, `#종류` 필터, 64KB 단위 미리보기.
   - 붙여넣기: 원본(⏎), 서식 없이(⇧⏎), 복사만(⌥⏎), ⌘-클릭으로 고른 순서대로 여러 개.
+  - 핀(⌥P), 삭제(⌥⌫), 사이드바(종류와 앱별 개수), Shortcuts 동작.
   - 감시: 0.2초 폴링, 변화가 10번 없으면 1초로 늦춘다(Maus 방식). 숨김·임시·자동 생성 표시, 무시할 앱, Universal Clipboard(선택), Remvel 자신의 쓰기는 기록하지 않는다. 출처 앱은 `org.nspasteboard.source`를 먼저 본다.
   - 설정 창: 단축키, 팝업 위치(화면 중앙, 마우스 위치, 메뉴바 아이콘 아래), 히스토리 상한, 로그인 시 실행, 기록 일시 정지, 무시할 앱.
   - 첫 실행 때 손쉬운 사용 권한 안내 창을 띄운다.
   - 아이콘: Icon Composer 문서(`app/Remvel/AppIcon.icon`)와 메뉴바 템플릿 이미지. 방향은 "Layer Shift"(GPT 탐색), 벡터는 logo-design 스킬로 다듬었다.
-- CI: GitHub Actions(`macos-26`)가 코어 테스트와 앱 빌드를 하고 `Remvel.zip`을 아티팩트로 올린다.
+- CI: GitHub Actions(`macos-26`)가 코어 lint(rustfmt, clippy)와 테스트, 앱 빌드를 하고 `Remvel.zip`을 아티팩트로 올린다. main은 nightly, `v*` 태그는 릴리스로 올린다.
 
 ## 다음 단계
 
-1. 여러 항목 복사(파일 여러 개)를 지원한다. 지금은 첫 항목만 저장한다.
-2. 핀 고정과 삭제 단축키(⌘⌫).
-3. 한국어 초성 검색.
-4. 비밀값 캡처 제외 규칙(정규식).
-5. 변환 필터(Pastebot 방식의 단계 체인)와 핀보드.
-6. 10만 개 이상에서 fuzzy 검색이 20ms를 넘으면 nucleo 병렬 검색으로 바꾼다.
-7. 서명, 노터라이즈, Homebrew cask 배포.
+1. 여러 pasteboard 항목 복사를 지원한다. 지금은 첫 항목만 저장한다(파일 여러 개는 경로를 모두 저장한다).
+2. 한국어 초성 검색.
+3. 비밀값 캡처 제외 규칙(정규식).
+4. 변환 필터(Pastebot 방식의 단계 체인)와 핀보드.
+5. 10만 개 이상에서 fuzzy 검색이 20ms를 넘으면 nucleo 병렬 검색으로 바꾼다.
+6. 노터라이즈, Homebrew cask 배포.
 
 ## 참고 프로젝트
 
