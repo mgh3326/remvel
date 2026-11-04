@@ -43,28 +43,45 @@ final class HistoryModel {
         setQuery(query)
     }
 
-    /// Splits "#image cat" into kinds ["image"] and text "cat". Unknown tags stay in the text.
-    static func parse(_ query: String) -> (text: String, kinds: [String]) {
+    /// Source apps that `@name` can pick, most used first.
+    var knownApps: [String] = []
+
+    /// Splits "#image @safari cat" into kinds ["image"], apps ["com.apple.Safari"] and text "cat".
+    /// `@` matches the start of an app's name, or of the last part of its bundle id, among `apps`;
+    /// the most used app wins. Unknown tags stay in the text.
+    static func parse(_ query: String, apps: [String] = []) -> (text: String, kinds: [String], apps: [String]) {
         var kinds: [String] = []
+        var picked: [String] = []
         var words: [Substring] = []
         for word in query.split(separator: " ", omittingEmptySubsequences: true) {
             if word.hasPrefix("#"), let kind = Kinds.tags[word.dropFirst().lowercased()] {
                 if !kinds.contains(kind) { kinds.append(kind) }
+            } else if word.hasPrefix("@"), word.count > 1, let app = matchApp(word.dropFirst().lowercased(), in: apps) {
+                if !picked.contains(app) { picked.append(app) }
             } else {
                 words.append(word)
             }
         }
-        return (words.joined(separator: " "), kinds)
+        return (words.joined(separator: " "), kinds, picked)
+    }
+
+    private static func matchApp(_ prefix: String, in apps: [String]) -> String? {
+        let squash = { (s: String) in s.lowercased().filter { !$0.isWhitespace } }
+        return apps.first { app in
+            squash(SourceApps.name(app)).hasPrefix(prefix)
+                || squash(String(app.split(separator: ".").last ?? "")).hasPrefix(prefix)
+        }
     }
 
     func setQuery(_ newQuery: String) {
         query = newQuery
         generation += 1
         let gen = generation
-        let (text, typedKinds) = Self.parse(newQuery)
-        // Chosen kinds first, then typed ones, without repeats, so the same input gives the same filter.
+        let (text, typedKinds, typedApps) = Self.parse(newQuery, apps: knownApps)
+        // Chosen kinds and apps first, then typed ones, without repeats, so the same input gives the same filter.
         let chosen = self.filter
-        let filter = Filter(kinds: chosen.kinds + typedKinds.filter { !chosen.kinds.contains($0) }, apps: chosen.apps)
+        let filter = Filter(kinds: chosen.kinds + typedKinds.filter { !chosen.kinds.contains($0) },
+                            apps: chosen.apps + typedApps.filter { !chosen.apps.contains($0) })
 
         // The whole history pages through `list`, which has the same order as `search` with no text.
         if text.isEmpty, filter.kinds.isEmpty, filter.apps.isEmpty {

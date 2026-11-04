@@ -37,6 +37,7 @@ jobs:
       - name: Lint core
         run: |
           rustup component add rustfmt clippy
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
           make lint
 
       - name: Test core

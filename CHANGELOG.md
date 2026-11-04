@@ -2,20 +2,20 @@
 
 Each version's section becomes its GitHub release notes and is shown in Remvel's update prompt.
 
-## Unreleased
-
-- The popup and Shortcuts show search results in the same order.
-- Filtered lists (a kind, an app, or a `#tag` with no search text) show pinned items first, like the full history. Search results rank by match and ignore pins; pinned items keep their badge.
-- Items copied or pasted at the same moment keep one order in the list, filters, search, and after relaunch.
-
 ## 0.4.0
 
+- Runs on Intel Macs too (universal build).
+- `@safari` and the like in the search field filter by source app.
+- Settings → Privacy can hide the popup from screen sharing, recordings and screenshots.
 - Pin items with ⌥P: pinned items stay at the top of the history and are never trimmed.
 - Delete an item with ⌥⌫.
 - Right-click a row for Paste, Paste as Plain Text, Copy, Pin and Delete.
 - Text in copied images is recognized on your Mac (Apple Vision), so searches find the words in screenshots. ⇧⏎ on an image pastes its text. Settings → Search turns this off.
 - Shortcuts, Spotlight and Siri actions: Search Clipboard History, Get Recent Clipboard Items, Get Text of Clipboard Item, Copy Clipboard Item, Open Remvel.
 - ⌘A, ⌘C, ⌘X, ⌘V and ⌘Z work in the search field. ⌘C with nothing selected there copies the selected item.
+- The popup and Shortcuts show search results in the same order.
+- Filtered lists (a kind, an app, or a `#tag` with no search text) show pinned items first, like the full history. Search results rank by match and ignore pins; pinned items keep their badge.
+- Items copied or pasted at the same moment keep one order in the list, filters, search, and after relaunch.
 
 ## 0.3.0
 

@@ -24,6 +24,9 @@ macOS 26 added a clipboard history to Spotlight. Remvel is for when that is not 
 
 ## Install
 
+Remvel runs on macOS 14 or later, on Apple silicon and Intel Macs.
+
+
 Download `Remvel-<build>.zip` from the [latest release](https://github.com/mgh3326/remvel/releases/latest), unzip it, and move Remvel to Applications. Or, in Terminal:
 
 ```sh
@@ -52,7 +55,7 @@ Press **⇧⌘C** (changeable in Settings) to open the history.
 | ⌥⌘S | Show the sidebar: browse by kind and source app |
 | ⌘, | Settings |
 
-Filter with the filter button next to the search field, or type `#link` `#image` `#file` `#color` `#text` `#rich` along with search text.
+Filter with the filter button next to the search field, or type `#link` `#image` `#file` `#color` `#text` `#rich` along with search text. `@` and the start of an app's name filters by source app: `@safari #link github`.
 
 Search also finds words inside copied images: Remvel reads them on your Mac with Apple's Vision framework, in a separate short-lived process so the app itself stays small. ⇧⏎ on an image pastes its text.
 

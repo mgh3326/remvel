@@ -175,7 +175,7 @@ private func core<T>(_ work: @escaping (Remvel) throws -> T) async throws -> T {
 
 /// The popup's search, in the popup's order: `#tags` filter, the core ranks.
 private func search(_ query: String, limit: Int) async throws -> [ClipboardItem] {
-    let (text, kinds) = HistoryModel.parse(query)
+    let (text, kinds, _) = HistoryModel.parse(query)
     let filter = Filter(kinds: kinds, apps: [])
     let summaries = try await core { store -> [ItemSummary] in
         let hits = try store.search(query: text, filter: filter, limit: UInt32(limit))

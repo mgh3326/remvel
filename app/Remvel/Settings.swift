@@ -78,6 +78,10 @@ final class Settings: ObservableObject {
     @Published var showInDock: Bool { didSet { defaults.set(showInDock, forKey: "showInDock") } }
     /// Also offer every build of main, not only tagged releases.
     @Published var nightlyUpdates: Bool { didSet { defaults.set(nightlyUpdates, forKey: "nightlyUpdates") } }
+    /// Keep the popup out of screen sharing, recordings and screenshots.
+    @Published var hideFromScreenSharing: Bool {
+        didSet { defaults.set(hideFromScreenSharing, forKey: "hideFromScreenSharing") }
+    }
     /// Read text in copied images on this Mac so searches find it.
     @Published var recognizeText: Bool { didSet { defaults.set(recognizeText, forKey: "recognizeText") } }
     @Published var hotkey: KeyCombo {
@@ -96,6 +100,7 @@ final class Settings: ObservableObject {
         historyLimit = defaults.integer(forKey: "historyLimit")
         showInDock = defaults.bool(forKey: "showInDock")
         nightlyUpdates = defaults.bool(forKey: "nightlyUpdates")
+        hideFromScreenSharing = defaults.bool(forKey: "hideFromScreenSharing")
         recognizeText = defaults.object(forKey: "recognizeText") as? Bool ?? true
         hotkey = defaults.data(forKey: "hotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .default

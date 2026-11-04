@@ -82,6 +82,7 @@ private struct SettingsView: View {
             Section {
                 Toggle("Pause recording", isOn: $settings.paused)
                 Toggle("Ignore copies from other devices (Universal Clipboard)", isOn: $settings.ignoreRemoteClipboard)
+                Toggle("Hide Remvel from screen sharing and screenshots", isOn: $settings.hideFromScreenSharing)
             } header: {
                 Text("Privacy")
             } footer: {

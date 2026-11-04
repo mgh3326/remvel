@@ -65,7 +65,10 @@ final class PopupController: NSObject {
     static let listWidth: CGFloat = 396
     static let rowHeight: CGFloat = 30
     static let quickPasteRows = 9
-    static let maxFacetApps: UInt32 = 12
+    /// Apps listed in the filter menu and sidebar.
+    static let maxFacetApps = 12
+    /// Apps that `@name` in the search field can pick from.
+    static let maxKnownApps: UInt32 = 500
 
     /// Screen frame of the menu bar icon, for `PopupPosition.statusItem`.
     var statusItemFrame: (() -> NSRect?)?
@@ -146,6 +149,8 @@ final class PopupController: NSObject {
     }
 
     private func open() {
+        // Screen sharing, recordings and screenshots see an empty space instead, when asked.
+        panel.sharingType = settings.hideFromScreenSharing ? .none : .readOnly
         searchField.stringValue = ""
         queue = []
         model.setQuery("")
@@ -181,8 +186,10 @@ final class PopupController: NSObject {
     }
 
     private func loadFacets() {
-        Core.shared.run({ try $0.facets(maxApps: Self.maxFacetApps) }) { [weak self] result in
-            guard let self, case .success(let facets) = result else { return }
+        Core.shared.run({ try $0.facets(maxApps: Self.maxKnownApps) }) { [weak self] result in
+            guard let self, case .success(var facets) = result else { return }
+            self.model.knownApps = facets.apps.map(\.name)
+            facets.apps = Array(facets.apps.prefix(Self.maxFacetApps))
             self.facets = facets
             self.sidebar.update(facets: facets, total: facets.kinds.reduce(0) { $0 + $1.count }, filter: self.model.filter)
         }
@@ -319,7 +326,7 @@ final class PopupController: NSObject {
         background.state = .active
         panel.contentView = background
 
-        searchField.placeholderString = "Search clipboard history"
+        searchField.placeholderString = "Search clipboard history      #image  @app"
         searchField.delegate = self
         searchField.focusRingType = .default
         searchField.font = .systemFont(ofSize: 14)
