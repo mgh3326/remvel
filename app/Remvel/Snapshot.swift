@@ -3,7 +3,7 @@ import AppKit
 /// Renders the popup offscreen to a PNG with synthetic history, for reviewing the UI
 /// without opening a window or touching the user's data. Not part of normal use.
 ///
-///     Remvel --snapshot out.png --data-dir /tmp/remvel-snap [--state default|search|queue|expanded|link|large] [--dark]
+///     Remvel --snapshot out.png --data-dir /tmp/remvel-snap [--state default|search|queue|expanded|link|large|files] [--dark]
 struct Snapshot {
     let output: URL
     let state: String
@@ -34,7 +34,7 @@ struct Snapshot {
             if store.count() == 0 { try Self.fill(store) }
         }) { result in
             if case .failure(let error) = result { fatalError("Snapshot data: \(error)") }
-            let query = ["search": "#image rvl", "link": "#link", "large": "#image"][state] ?? ""
+            let query = ["search": "#image rvl", "link": "#link", "large": "#image", "files": "#files"][state] ?? ""
             let queueRows = state == "queue" ? [7, 1, 4] : []
             popup.prepareSnapshot(query: query, expanded: state == "expanded", large: state == "large",
                                   queueRows: queueRows) { view in
@@ -77,5 +77,21 @@ struct Snapshot {
             let id = try store.ingest(capture: capture).id
             try store.setRecognizedText(id: id, text: "Remvel clipboard history 검색 미리보기")
         }
+        // Several files in one copy, written next to the snapshot's database; one has gone missing.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("remvel-snapshot-files")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let icon = NSBitmapImageRep(data: NSApp.applicationIconImage!.tiffRepresentation!)!
+            .representation(using: .png, properties: [:])!
+        var paths: [String] = []
+        for name in ["coffee-dripper.png", "kettle.png", "beans.png", "notes.txt"] {
+            let url = folder.appendingPathComponent(name)
+            try (name.hasSuffix(".txt") ? Data("Pour-over notes".utf8) : icon).write(to: url)
+            paths.append(url.path)
+        }
+        paths.append(folder.appendingPathComponent("moved-away.png").path)
+        _ = try store.ingest(capture: Capture(
+            reps: [Rep(uti: PasteboardWatcher.filePathsUTI, data: Data(paths.joined(separator: "\n").utf8))],
+            app: "com.apple.finder", derivedText: nil, thumbnailPng: nil, title: nil, copiedAt: at + 10_000
+        ))
     }
 }

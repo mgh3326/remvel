@@ -496,10 +496,11 @@ fn make_title(text: &str, kind: &str) -> String {
     if title.is_empty() { format!("[{kind}]") } else { title }
 }
 
-/// "a.csv" for one file, "a.csv, b.png" for more.
+/// "a.csv" for one file, "2 files: a.csv, b.png" for more.
 fn file_title(paths: &str) -> String {
     let names: Vec<&str> = paths.lines().filter(|l| !l.is_empty()).map(|p| p.rsplit('/').next().unwrap_or(p)).collect();
-    make_title(&names.join(", "), "files")
+    let count = if names.len() > 1 { format!("{} files: ", names.len()) } else { String::new() };
+    make_title(&(count + &names.join(", ")), "files")
 }
 
 /// Drops the partial scalars at both ends of a byte window.
@@ -617,7 +618,7 @@ mod tests {
         };
         let id = store.ingest(capture).unwrap().id;
         let row = &store.list(0, 1).unwrap()[0];
-        assert_eq!((row.kind.as_str(), row.title.as_str(), row.line_count), ("files", "a.csv, b.png", 2));
+        assert_eq!((row.kind.as_str(), row.title.as_str(), row.line_count), ("files", "2 files: a.csv, b.png", 2));
         assert_eq!(store.search("Pictures", &crate::Filter::default(), 10).unwrap()[0].id, id);
 
         assert_eq!(store.thumbnail(id).unwrap(), None);

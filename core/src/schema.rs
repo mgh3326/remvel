@@ -60,6 +60,8 @@ const MIGRATIONS: &[&str] = &[
     // 3: break ties on copy time by id, so equal times have one order everywhere.
     "DROP INDEX items_recent;
      CREATE INDEX items_recent ON items(last_copied_at DESC, id DESC);",
+    // 4: say how many files a multi-file copy holds, as new ones are titled.
+    "UPDATE items SET title = line_count || ' files: ' || title WHERE kind = 'files' AND line_count > 1;",
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {

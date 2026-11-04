@@ -47,6 +47,18 @@ enum Paster {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: postCommandV)
     }
 
+    /// Pastes some of the files of item `id`; the item counts as used.
+    static func paste(files: [String], from id: Int64) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        Core.shared.run({ try $0.touch(id: id, at: now) }) { _ in }
+        write([Rep(uti: PasteboardWatcher.filePathsUTI, data: Data(files.joined(separator: "\n").utf8))])
+        guard AXIsProcessTrusted() else {
+            Onboarding.shared.show()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: postCommandV)
+    }
+
     /// Puts one item on the pasteboard without pasting, for Shortcuts.
     static func copy(id: Int64, plainText: Bool) {
         Core.shared.run({ try contents(of: id, mode: plainText ? .plainText : .original, store: $0) }) { result in

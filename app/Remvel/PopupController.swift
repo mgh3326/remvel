@@ -92,6 +92,8 @@ final class PopupController: NSObject {
     static let maxFacetApps = 12
     /// Apps that `@name` in the search field and the sidebar can pick from.
     static let maxKnownApps: UInt32 = 500
+    /// Files of one item listed under Paste One File; the preview's tiles show all of them.
+    static let maxFileActions = 30
 
     /// Screen frame of the menu bar icon, for `PopupPosition.statusItem`.
     var statusItemFrame: (() -> NSRect?)?
@@ -152,6 +154,7 @@ final class PopupController: NSObject {
         panel.onCopyItem = { [weak self] in self?.pasteSelected(mode: .copyOnly) }
         panel.onShowActions = { [weak self] in self?.showActions() }
         panel.onToggleLargePreview = { [weak self] in self.map { $0.setLargePreview(!$0.largePreview) } }
+        preview.onPickFile = { [weak self] path in self?.pasteFiles([path], ofRow: self?.table.selectedRow ?? -1) }
         sidebar.onSelect = { [weak self] filter in self?.model.filter = filter }
     }
 
@@ -377,6 +380,14 @@ final class PopupController: NSObject {
         add(item.pin == nil ? "Pin" : "Unpin", "p", .option, { [weak self] in self?.togglePin(row: row) })
         add("Delete", "\u{8}", .option, { [weak self] in self?.delete(row: row) })
         menu.addItem(.separator())
+        // The preview has loaded the selected item's paths; right-click on another row has none.
+        if item.kind == "files", row == table.selectedRow, preview.filePaths.count > 1 {
+            menu.addItem(.sectionHeader(title: "Paste One File"))
+            for path in preview.filePaths.prefix(Self.maxFileActions) {
+                add((path as NSString).lastPathComponent, "", [], { [weak self] in self?.pasteFiles([path], ofRow: row) })
+            }
+            return
+        }
         menu.addItem(.sectionHeader(title: "Paste Changed"))
         for (index, group) in Transform.all.enumerated() {
             if index > 0 { menu.addItem(.separator()) }
@@ -384,6 +395,12 @@ final class PopupController: NSObject {
                 add(transform.title, "", [], { [weak self] in self?.paste(id: item.id, transformedBy: transform) })
             }
         }
+    }
+
+    private func pasteFiles(_ paths: [String], ofRow row: Int) {
+        guard let item = model.summary(at: row) else { return }
+        close()
+        Paster.paste(files: paths, from: item.id)
     }
 
     /// Pastes the item's text after `transform`; beeps when it does not apply.

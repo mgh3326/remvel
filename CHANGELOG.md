@@ -8,6 +8,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 - Links show the page's title, site and image. The page is loaded only when you select the link, never for links that look like sign-in, reset or token links, and Settings → Privacy turns it off.
 - ⌘Y shows the preview across the whole popup; ↑↓ still move through the list.
 - Deleted rows fade out.
+- A copy of several files shows every file as a tile and is titled "3 files: …". Click a tile, or pick it under ⌘K → Paste One File, to paste that file alone. Files that were moved or deleted are greyed out.
 - Runs on Intel Macs too (universal build).
 - `@safari` and the like in the search field filter by source app.
 - The sidebar (⌥⌘S) lists every app you copied from, not just the top 12.

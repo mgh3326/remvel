@@ -22,6 +22,15 @@ final class PreviewController: NSObject {
     private let caption = NSTextField(labelWithString: "")
     /// Quick Look for copied files: documents, PDFs, videos, folders.
     private let fileView = QLPreviewView(frame: .zero, style: .compact)!
+    /// Several copied files at once, as tiles.
+    private let fileGrid = FileGrid()
+    /// Paths of the shown files item, once loaded; the action panel offers each one.
+    private(set) var filePaths: [String] = []
+    /// A tile of the file grid was clicked.
+    var onPickFile: ((String) -> Void)? {
+        get { fileGrid.onPick }
+        set { fileGrid.onPick = newValue }
+    }
     /// Title, image and site of a copied link, fetched when the link is previewed.
     private let linkView = LPLinkView(frame: .zero)
     private var linkFetch: LPMetadataProvider?
@@ -88,7 +97,7 @@ final class PreviewController: NSObject {
         let content = card.contentView!
         linkView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         linkView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        for sub in [textScroll, imageView, caption, fileView, linkView] {
+        for sub in [textScroll, imageView, caption, fileView, fileGrid, linkView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(sub)
         }
@@ -134,6 +143,11 @@ final class PreviewController: NSObject {
             fileView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 1),
             fileView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -1),
             fileView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -1),
+
+            fileGrid.topAnchor.constraint(equalTo: content.topAnchor, constant: 1),
+            fileGrid.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 1),
+            fileGrid.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -1),
+            fileGrid.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -1),
         ])
         show(nil, force: true)
     }
@@ -149,6 +163,8 @@ final class PreviewController: NSObject {
         caption.stringValue = ""
         caption.toolTip = nil
         fileView.previewItem = nil
+        fileGrid.paths = []
+        filePaths = []
         linkFetch?.cancel()
         linkFetch = nil
         meta.stringValue = newItem.map(Self.describe) ?? ""
@@ -161,7 +177,8 @@ final class PreviewController: NSObject {
         textScroll.isHidden = visual || link || kind == "files"
         imageView.isHidden = !visual
         caption.isHidden = !visual && !link
-        fileView.isHidden = kind != "files"
+        fileView.isHidden = kind != "files" || (newItem?.lineCount ?? 0) > 1
+        fileGrid.isHidden = kind != "files" || (newItem?.lineCount ?? 0) <= 1
         linkView.isHidden = !link
 
         guard let newItem else { return }
@@ -239,12 +256,19 @@ final class PreviewController: NSObject {
             || ["reset", "magic", "verify", "confirm", "invite", "login", "signin", "oauth"].contains { path.contains($0) }
     }
 
-    /// Previews the first file that still exists; falls back to the list of paths.
+    /// One file: Quick Look of it. Several: a tile for each. Falls back to the list of paths when none is left.
     private func loadFiles(_ id: Int64) {
         let gen = generation
-        Core.shared.run({ try $0.previewText(id: id, byteOffset: 0, maxBytes: Self.chunkBytes) }) { [weak self] result in
+        Core.shared.run({ try $0.fullText(id: id) }) { [weak self] result in
             guard let self, gen == self.generation, case .success(let text) = result else { return }
             let paths = text.split(separator: "\n").map(String.init)
+            self.filePaths = paths
+            if paths.count > 1 {
+                let missing = paths.filter { !FileManager.default.fileExists(atPath: $0) }.count
+                self.meta.stringValue += missing == 0 ? " · click a file to paste it alone" : " · \(missing) moved or deleted"
+                self.fileGrid.paths = paths
+                return
+            }
             guard let first = paths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
                 self.meta.stringValue += " · moved or deleted"
                 self.fileView.isHidden = true
@@ -252,10 +276,7 @@ final class PreviewController: NSObject {
                 self.loadNextChunk()
                 return
             }
-            let shown = paths.count > 1
-                ? "showing \((first as NSString).lastPathComponent)"
-                : (first as NSString).abbreviatingWithTildeInPath
-            self.meta.stringValue += " · \(shown)"
+            self.meta.stringValue += " · \((first as NSString).abbreviatingWithTildeInPath)"
             self.fileView.previewItem = URL(fileURLWithPath: first) as NSURL
         }
     }
