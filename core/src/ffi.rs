@@ -46,8 +46,13 @@ impl Remvel {
         self.store().summaries(&ids)
     }
 
-    pub fn search(&self, query: String, mode: SearchMode, limit: u32) -> Result<Vec<SearchHit>> {
-        self.store().search(&query, mode, limit as usize)
+    /// `kinds` limits results to those item kinds; empty means all.
+    pub fn search(&self, query: String, mode: SearchMode, kinds: Vec<String>, limit: u32) -> Result<Vec<SearchHit>> {
+        self.store().search(&query, mode, &kinds, limit as usize)
+    }
+
+    pub fn touch(&self, id: i64, at: i64) -> Result<()> {
+        self.store().touch(id, at)
     }
 
     pub fn preview_text(&self, id: i64, byte_offset: i64, max_bytes: i64) -> Result<String> {

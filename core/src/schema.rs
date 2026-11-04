@@ -9,7 +9,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS items (
     id              INTEGER PRIMARY KEY,
     content_hash    BLOB    NOT NULL UNIQUE,
-    kind            TEXT    NOT NULL,          -- text | rich | image | files
+    kind            TEXT    NOT NULL,          -- text | link | rich | image | files
     title           TEXT    NOT NULL,          -- <= TITLE_MAX_CHARS, single line
     app             TEXT,
     text_bytes      INTEGER NOT NULL DEFAULT 0,
@@ -45,6 +45,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS item_fts USING fts5(
 );
 "#;
 
+/// Steps applied in order after `SCHEMA`; `PRAGMA user_version` records how many ran.
+/// Append only: never edit or reorder a step that has shipped.
+const MIGRATIONS: &[&str] = &[
+    // 1: counts for the preview's info line, computed once at ingest.
+    "ALTER TABLE items ADD COLUMN char_count INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE items ADD COLUMN line_count INTEGER NOT NULL DEFAULT 0;",
+];
+
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(SCHEMA)
+    conn.execute_batch(SCHEMA)?;
+    let applied: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    for (i, step) in MIGRATIONS.iter().enumerate().skip(applied as usize) {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(step)?;
+        tx.pragma_update(None, "user_version", i as i64 + 1)?;
+        tx.commit()?;
+    }
+    Ok(())
 }

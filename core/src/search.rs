@@ -23,30 +23,36 @@ pub struct SearchHit {
     pub title_indices: Vec<u32>,
 }
 
+struct Entry {
+    id: i64,
+    title: Utf32String,
+    kind: Box<str>,
+}
+
 /// Titles kept in memory, newest first, so fuzzy search never hits SQLite.
 #[derive(Default)]
 pub(crate) struct TitleIndex {
-    entries: Vec<(i64, Utf32String)>,
+    entries: Vec<Entry>,
 }
 
 impl TitleIndex {
-    pub fn from_rows(rows: Vec<(i64, String)>) -> Self {
-        TitleIndex { entries: rows.into_iter().map(|(id, t)| (id, Utf32String::from(t))).collect() }
+    pub fn from_rows(rows: Vec<(i64, String, String)>) -> Self {
+        TitleIndex { entries: rows.into_iter().map(|(id, t, k)| Entry::new(id, t, &k)).collect() }
     }
 
-    pub fn push_front(&mut self, id: i64, title: String) {
-        self.entries.insert(0, (id, Utf32String::from(title)));
+    pub fn push_front(&mut self, id: i64, title: String, kind: &str) {
+        self.entries.insert(0, Entry::new(id, title, kind));
     }
 
     pub fn touch(&mut self, id: i64) {
-        if let Some(pos) = self.entries.iter().position(|(e, _)| *e == id) {
+        if let Some(pos) = self.entries.iter().position(|e| e.id == id) {
             let entry = self.entries.remove(pos);
             self.entries.insert(0, entry);
         }
     }
 
     pub fn remove(&mut self, id: i64) {
-        self.entries.retain(|(e, _)| *e != id);
+        self.entries.retain(|e| e.id != id);
     }
 
     pub fn len(&self) -> usize {
@@ -54,31 +60,54 @@ impl TitleIndex {
     }
 }
 
+impl Entry {
+    fn new(id: i64, title: String, kind: &str) -> Self {
+        Entry { id, title: Utf32String::from(title), kind: kind.into() }
+    }
+}
+
+/// Item kinds to keep; empty keeps all.
+fn allows(kinds: &[String], kind: &str) -> bool {
+    kinds.is_empty() || kinds.iter().any(|k| k == kind)
+}
+
 impl Store {
-    pub fn search(&mut self, query: &str, mode: SearchMode, limit: usize) -> Result<Vec<SearchHit>> {
+    /// With an empty query and some `kinds`, lists those kinds newest first.
+    pub fn search(&mut self, query: &str, mode: SearchMode, kinds: &[String], limit: usize) -> Result<Vec<SearchHit>> {
         if query.is_empty() {
-            return Ok(Vec::new());
+            return Ok(if kinds.is_empty() { Vec::new() } else { self.recent_of_kinds(kinds, limit) });
         }
         match mode {
-            SearchMode::Fuzzy => Ok(self.fuzzy(query, limit)),
-            SearchMode::Exact if query.chars().count() >= TRIGRAM_MIN_CHARS => self.full_text(query, limit),
-            SearchMode::Exact => Ok(self.title_substring(query, limit)),
+            SearchMode::Fuzzy => Ok(self.fuzzy(query, kinds, limit)),
+            SearchMode::Exact if query.chars().count() >= TRIGRAM_MIN_CHARS => self.full_text(query, kinds, limit),
+            SearchMode::Exact => Ok(self.title_substring(query, kinds, limit)),
         }
     }
 
-    fn fuzzy(&mut self, query: &str, limit: usize) -> Vec<SearchHit> {
+    fn recent_of_kinds(&mut self, kinds: &[String], limit: usize) -> Vec<SearchHit> {
+        self.titles_mut()
+            .entries
+            .iter()
+            .filter(|e| allows(kinds, &e.kind))
+            .take(limit)
+            .map(|e| SearchHit { id: e.id, score: 0, title_indices: Vec::new() })
+            .collect()
+    }
+
+    fn fuzzy(&mut self, query: &str, kinds: &[String], limit: usize) -> Vec<SearchHit> {
         let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
         let mut matcher = Matcher::new(Config::DEFAULT);
         let mut hits: Vec<SearchHit> = self
             .titles_mut()
             .entries
             .iter()
-            .filter_map(|(id, title)| {
+            .filter(|e| allows(kinds, &e.kind))
+            .filter_map(|e| {
                 let mut indices = Vec::new();
-                let score = pattern.indices(title.slice(..), &mut matcher, &mut indices)?;
+                let score = pattern.indices(e.title.slice(..), &mut matcher, &mut indices)?;
                 indices.sort_unstable();
                 indices.dedup();
-                Some(SearchHit { id: *id, score, title_indices: indices })
+                Some(SearchHit { id: e.id, score, title_indices: indices })
             })
             .collect();
         // Stable sort keeps recency order among equal scores.
@@ -87,24 +116,31 @@ impl Store {
         hits
     }
 
-    fn full_text(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+    fn full_text(&self, query: &str, kinds: &[String], limit: usize) -> Result<Vec<SearchHit>> {
         let phrase = format!("\"{}\"", query.replace('"', "\"\""));
+        // Kinds travel as one JSON array so the statement text, and its cache entry, never change.
+        let kinds_json = format!(
+            "[{}]",
+            kinds.iter().map(|k| format!("\"{}\"", k.replace(['"', '\\'], ""))).collect::<Vec<_>>().join(",")
+        );
         let mut stmt = self.conn().prepare_cached(
             "SELECT items.id FROM item_fts JOIN items ON items.id = item_fts.rowid
-             WHERE item_fts MATCH ?1 ORDER BY items.last_copied_at DESC LIMIT ?2",
+             WHERE item_fts MATCH ?1
+               AND (json_array_length(?3) = 0 OR items.kind IN (SELECT value FROM json_each(?3)))
+             ORDER BY items.last_copied_at DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![phrase, limit as i64], |r| r.get(0))?;
+        let rows = stmt.query_map(params![phrase, limit as i64, kinds_json], |r| r.get(0))?;
         rows.map(|id| Ok(SearchHit { id: id?, score: 0, title_indices: Vec::new() })).collect()
     }
 
-    fn title_substring(&mut self, query: &str, limit: usize) -> Vec<SearchHit> {
+    fn title_substring(&mut self, query: &str, kinds: &[String], limit: usize) -> Vec<SearchHit> {
         let needle = query.to_lowercase();
         self.titles_mut()
             .entries
             .iter()
-            .filter(|(_, t)| t.to_string().to_lowercase().contains(&needle))
+            .filter(|e| allows(kinds, &e.kind) && e.title.to_string().to_lowercase().contains(&needle))
             .take(limit)
-            .map(|(id, _)| SearchHit { id: *id, score: 0, title_indices: Vec::new() })
+            .map(|e| SearchHit { id: e.id, score: 0, title_indices: Vec::new() })
             .collect()
     }
 }
@@ -132,18 +168,18 @@ mod tests {
     fn exact_search_finds_text_beyond_the_title() {
         let tail = format!("{}needle-here", "x ".repeat(2_000));
         let mut store = store_with(&["alpha", &tail, "한국어 클립보드 검색"]);
-        let hits = store.search("needle-here", SearchMode::Exact, 10).unwrap();
+        let hits = store.search("needle-here", SearchMode::Exact, &[], 10).unwrap();
         assert_eq!(hits.len(), 1);
-        let hits = store.search("클립보드", SearchMode::Exact, 10).unwrap();
+        let hits = store.search("클립보드", SearchMode::Exact, &[], 10).unwrap();
         assert_eq!(hits.len(), 1);
-        let hits = store.search("al", SearchMode::Exact, 10).unwrap();
+        let hits = store.search("al", SearchMode::Exact, &[], 10).unwrap();
         assert_eq!(hits.len(), 1);
     }
 
     #[test]
     fn fuzzy_ranks_and_reports_indices() {
         let mut store = store_with(&["git commit --amend", "grep -r foo", "cargo build"]);
-        let hits = store.search("gca", SearchMode::Fuzzy, 10).unwrap();
+        let hits = store.search("gca", SearchMode::Fuzzy, &[], 10).unwrap();
         let top = store.summaries(&[hits[0].id]).unwrap().remove(0);
         assert_eq!(top.title, "git commit --amend");
         assert!(!hits[0].title_indices.is_empty());
@@ -154,7 +190,20 @@ mod tests {
         let mut store = store_with(&["remove me please"]);
         let id = store.list(0, 1).unwrap()[0].id;
         store.delete(id).unwrap();
-        assert!(store.search("remove", SearchMode::Exact, 10).unwrap().is_empty());
-        assert!(store.search("rmp", SearchMode::Fuzzy, 10).unwrap().is_empty());
+        assert!(store.search("remove", SearchMode::Exact, &[], 10).unwrap().is_empty());
+        assert!(store.search("rmp", SearchMode::Fuzzy, &[], 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn kind_filter_applies_to_every_path() {
+        let mut store = store_with(&["https://example.com/docs", "docs folder notes", "another link https://x.y"]);
+        let links = ["link".to_string()];
+        let only = |hits: Vec<SearchHit>| hits.len();
+        assert_eq!(only(store.search("", SearchMode::Exact, &links, 10).unwrap()), 1);
+        assert_eq!(only(store.search("docs", SearchMode::Exact, &links, 10).unwrap()), 1);
+        assert_eq!(only(store.search("docs", SearchMode::Exact, &[], 10).unwrap()), 2);
+        assert_eq!(only(store.search("dcs", SearchMode::Fuzzy, &links, 10).unwrap()), 1);
+        assert_eq!(only(store.search("do", SearchMode::Exact, &links, 10).unwrap()), 1);
+        assert!(store.search("", SearchMode::Fuzzy, &[], 10).unwrap().is_empty());
     }
 }

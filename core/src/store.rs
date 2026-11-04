@@ -56,6 +56,8 @@ pub struct ItemSummary {
     pub last_copied_at: i64,
     pub copy_count: i64,
     pub pin: Option<String>,
+    pub char_count: i64,
+    pub line_count: i64,
 }
 
 pub struct Store {
@@ -82,8 +84,8 @@ impl Store {
     fn reload_titles(&mut self) -> Result<()> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, title FROM items ORDER BY last_copied_at DESC")?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            .prepare("SELECT id, title, kind FROM items ORDER BY last_copied_at DESC")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         self.titles = TitleIndex::from_rows(rows.collect::<rusqlite::Result<_>>()?);
         Ok(())
     }
@@ -106,14 +108,17 @@ impl Store {
             return Ok(IngestResult { id, deduplicated: true });
         }
 
-        let kind = classify(&capture.reps);
         let text = plain_text(&capture);
+        let kind = classify(&capture.reps, &text);
         let title = make_title(&text, kind);
+        let char_count = text.chars().count() as i64;
+        let line_count = if text.is_empty() { 0 } else { text.lines().count() as i64 };
 
         tx.execute(
-            "INSERT INTO items (content_hash, kind, title, app, text_bytes, first_copied_at, last_copied_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![&hash[..], kind, title, capture.app, text.len() as i64, capture.copied_at],
+            "INSERT INTO items (content_hash, kind, title, app, text_bytes, first_copied_at, last_copied_at,
+                                char_count, line_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8)",
+            params![&hash[..], kind, title, capture.app, text.len() as i64, capture.copied_at, char_count, line_count],
         )?;
         let id = tx.last_insert_rowid();
 
@@ -132,14 +137,27 @@ impl Store {
         }
         tx.commit()?;
 
-        self.titles.push_front(id, title);
+        self.titles.push_front(id, title, kind);
         Ok(IngestResult { id, deduplicated: false })
+    }
+
+    /// Marks an item as just used, e.g. after Remvel pasted it, without a new capture.
+    pub fn touch(&mut self, id: i64, at: i64) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE items SET last_copied_at = ?2, copy_count = copy_count + 1 WHERE id = ?1",
+            params![id, at],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound(id));
+        }
+        self.titles.touch(id);
+        Ok(())
     }
 
     /// One page of list rows. Never reads payload tables.
     pub fn list(&self, offset: i64, limit: i64) -> Result<Vec<ItemSummary>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin
+            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count
              FROM items ORDER BY last_copied_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(params![limit, offset], summary_from_row)?;
@@ -148,7 +166,7 @@ impl Store {
 
     pub fn summaries(&self, ids: &[i64]) -> Result<Vec<ItemSummary>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin
+            "SELECT id, kind, title, app, text_bytes, last_copied_at, copy_count, pin, char_count, line_count
              FROM items WHERE id = ?1",
         )?;
         // Ids deleted since the caller got them are skipped, not an error.
@@ -248,6 +266,8 @@ fn summary_from_row(r: &rusqlite::Row) -> rusqlite::Result<ItemSummary> {
         last_copied_at: r.get(5)?,
         copy_count: r.get(6)?,
         pin: r.get(7)?,
+        char_count: r.get(8)?,
+        line_count: r.get(9)?,
     })
 }
 
@@ -268,17 +288,27 @@ fn find<'a>(reps: &'a [Rep], uti: &str) -> Option<&'a [u8]> {
     reps.iter().find(|r| r.uti == uti).map(|r| r.data.as_slice())
 }
 
-fn classify(reps: &[Rep]) -> &'static str {
+fn classify(reps: &[Rep], text: &str) -> &'static str {
     let has = |uti: &str| reps.iter().any(|r| r.uti == uti);
     if has(UTI_FILE_URL) {
         "files"
     } else if IMAGE_UTIS.iter().any(|u| has(u)) && !has(UTI_TEXT) {
         "image"
+    } else if is_link(text) {
+        "link"
     } else if has(UTI_HTML) || has(UTI_RTF) {
         "rich"
     } else {
         "text"
     }
+}
+
+/// A single web URL and nothing else.
+fn is_link(text: &str) -> bool {
+    let text = text.trim();
+    (text.starts_with("https://") || text.starts_with("http://"))
+        && text.len() > "https://".len()
+        && !text.contains(char::is_whitespace)
 }
 
 fn plain_text(capture: &Capture) -> String {
@@ -406,6 +436,48 @@ mod tests {
         let title = make_title(&long, "text");
         assert!(title.starts_with("first second"));
         assert_eq!(title.chars().count(), TITLE_MAX_CHARS);
+    }
+
+    #[test]
+    fn counts_and_link_kind_are_set_at_ingest() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.ingest(text("한글 줄\nsecond line", 1)).unwrap();
+        store.ingest(text("  https://example.com/a?b=c \n", 2)).unwrap();
+        let rows = store.list(0, 10).unwrap();
+        assert_eq!(rows[0].kind, "link");
+        assert_eq!((rows[1].kind.as_str(), rows[1].char_count, rows[1].line_count), ("text", 16, 2));
+    }
+
+    #[test]
+    fn touch_moves_item_to_front() {
+        let mut store = Store::open_in_memory().unwrap();
+        let first = store.ingest(text("first", 1)).unwrap().id;
+        store.ingest(text("second", 2)).unwrap();
+        store.touch(first, 3).unwrap();
+        let rows = store.list(0, 10).unwrap();
+        assert_eq!((rows[0].id, rows[0].copy_count), (first, 2));
+        assert!(matches!(store.touch(999, 4), Err(Error::NotFound(999))));
+    }
+
+    #[test]
+    fn migrations_upgrade_an_unversioned_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(schema::SCHEMA).unwrap();
+            conn.execute(
+                "INSERT INTO items (content_hash, kind, title, first_copied_at, last_copied_at)
+                 VALUES (x'00', 'text', 'old', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.list(0, 1).unwrap()[0].char_count, 0);
+        drop(store);
+        // Opening again must not re-run steps.
+        Store::open(&path).unwrap();
     }
 
     #[test]

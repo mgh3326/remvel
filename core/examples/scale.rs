@@ -52,9 +52,9 @@ fn main() {
     };
 
     let (list_ms, rows) = time(&mut || store.list(0, 50).unwrap().len());
-    let (fuzzy_ms, fz) = time(&mut || store.search("gcm", SearchMode::Fuzzy, 200).unwrap().len());
-    let (exact_ms, ex) = time(&mut || store.search("deploy from commit", SearchMode::Exact, 200).unwrap().len());
-    let (ko_ms, ko) = time(&mut || store.search("검색 select", SearchMode::Exact, 200).unwrap().len());
+    let (fuzzy_ms, fz) = time(&mut || store.search("gcm", SearchMode::Fuzzy, &[], 200).unwrap().len());
+    let (exact_ms, ex) = time(&mut || store.search("deploy from commit", SearchMode::Exact, &[], 200).unwrap().len());
+    let (ko_ms, ko) = time(&mut || store.search("검색 select", SearchMode::Exact, &[], 200).unwrap().len());
     let (prev_ms, pb) = time(&mut || store.preview_text(1, 500_000, 64 * 1024).unwrap().len());
     let db_mb = std::fs::metadata(&path).unwrap().len() as f64 / 1e6;
 
