@@ -772,6 +772,10 @@ mod tests {
         assert_eq!(ids(&mut store, "휴지통").len(), 2);
         let images = Filter { kinds: vec!["image".into()], apps: vec![] };
         assert_eq!(store.search("휴지통", &images, 10).unwrap()[0].id, a);
+        // Two-syllable words are too short for the index but still find the image, newest first.
+        assert_eq!(ids(&mut store, "항목"), [a]);
+        assert_eq!(ids(&mut store, "pastepal"), [a]);
+        assert_eq!(ids(&mut store, "휴지"), [3, a]);
         // Recognizing again replaces, not appends.
         store.set_recognized_text(a, "other words").unwrap();
         assert!(ids(&mut store, "휴지통").iter().all(|&id| id != a));

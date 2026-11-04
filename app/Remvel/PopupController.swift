@@ -26,7 +26,7 @@ private final class Panel: NSPanel {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let key = Self.latinKey(event)
         // Remvel has no Edit menu to route these, so the search field gets them here.
         if let editor = firstResponder as? NSTextView {
             switch (flags, key) {
@@ -63,6 +63,19 @@ private final class Panel: NSPanel {
         }
         return super.performKeyEquivalent(with: event)
     }
+
+    /// The key as on a US layout, so ⌘Y works while typing Korean ("ㅛ") or another non-Latin script.
+    /// Latin layouts keep their own letters, so a Dvorak user's ⌘K is still the key marked K.
+    private static func latinKey(_ event: NSEvent) -> String {
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        if key.allSatisfy(\.isASCII) { return key }
+        return usKeys[event.keyCode] ?? key
+    }
+
+    private static let usKeys: [UInt16: String] = [
+        0: "a", 1: "s", 6: "z", 7: "x", 8: "c", 9: "v", 16: "y", 40: "k", 43: ",",
+        18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
+    ]
 }
 
 /// The popup: search band, optional facet sidebar, virtualized history list, preview card, hint footer.

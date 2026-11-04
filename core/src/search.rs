@@ -26,7 +26,7 @@ const TRIGRAM_MIN_CHARS: usize = 3;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SearchMode {
     /// Case-insensitive substring over the full text and recognized image text.
-    /// Queries shorter than 3 characters match titles only.
+    /// Queries shorter than 3 characters match titles and recognized image text only.
     Exact,
     /// fzf-style ranking over titles.
     Fuzzy,
@@ -172,11 +172,14 @@ impl TitleIndex {
     }
 
     /// Newest first.
-    fn title_substring(&self, query: &str, filter: &Filter, limit: usize) -> Vec<SearchHit> {
+    /// Newest first: titles containing `query`, plus the items in `also`.
+    fn title_substring(&self, query: &str, also: &HashSet<i64>, filter: &Filter, limit: usize) -> Vec<SearchHit> {
         let needle = query.to_lowercase();
         self.entries
             .iter()
-            .filter(|e| filter.allows(e) && e.title.to_string().to_lowercase().contains(&needle))
+            .filter(|e| {
+                filter.allows(e) && (also.contains(&e.id) || e.title.to_string().to_lowercase().contains(&needle))
+            })
             .take(limit)
             .map(Entry::hit)
             .collect()
@@ -211,8 +214,21 @@ impl Store {
         match mode {
             SearchMode::Fuzzy => Ok(self.titles().fuzzy(query, filter, limit)),
             SearchMode::Exact if query.chars().count() >= TRIGRAM_MIN_CHARS => self.match_text(query, filter, limit),
-            SearchMode::Exact => Ok(self.titles().title_substring(query, filter, limit)),
+            SearchMode::Exact => {
+                // Too short for the index. Text in images has no title to fall back on, and Korean
+                // words are often two syllables, so their recognized text is scanned instead;
+                // it is small next to the history's text.
+                let in_images = self.recognized_text_containing(query)?;
+                Ok(self.titles().title_substring(query, &in_images, filter, limit))
+            }
         }
+    }
+
+    fn recognized_text_containing(&self, query: &str) -> Result<HashSet<i64>> {
+        let mut stmt =
+            self.conn().prepare_cached("SELECT item_id FROM item_ocr WHERE instr(lower(body), lower(?1)) > 0")?;
+        let ids = stmt.query_map([query], |r| r.get(0))?;
+        Ok(ids.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Newest first.

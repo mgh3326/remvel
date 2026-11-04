@@ -15,6 +15,8 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 - Delete an item with ⌥⌫.
 - Right-click a row for Paste, Paste as Plain Text, Copy, Pin and Delete.
 - Text in copied images is recognized on your Mac (Apple Vision), so searches find the words in screenshots. ⇧⏎ on an image pastes its text. Settings → Search turns this off.
+- Two-letter searches, like most Korean words, also find text in images.
+- ⌘K, ⌘Y, ⌘A, ⌘C and the other shortcuts work while typing Korean or another non-Latin script.
 - Shortcuts, Spotlight and Siri actions: Search Clipboard History, Get Recent Clipboard Items, Get Text of Clipboard Item, Copy Clipboard Item, Open Remvel.
 - ⌘A, ⌘C, ⌘X, ⌘V and ⌘Z work in the search field. ⌘C with nothing selected there copies the selected item.
 - The popup and Shortcuts show search results in the same order.
