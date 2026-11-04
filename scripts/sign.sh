@@ -13,11 +13,14 @@ fi
 WORK=$(mktemp -d)
 KEYCHAIN="$WORK/sign.keychain-db"
 KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
-trap 'security delete-keychain "$KEYCHAIN" 2>/dev/null || true; rm -rf "$WORK"' EXIT
+# codesign looks identities up through the search list, so add the keychain while signing.
+ORIGINAL_KEYCHAINS=$(security list-keychains -d user | tr -d '"')
+trap 'security list-keychains -d user -s $ORIGINAL_KEYCHAINS; security delete-keychain "$KEYCHAIN" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 echo "$REMVEL_CERT_P12" | base64 --decode > "$WORK/cert.p12"
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+security list-keychains -d user -s "$KEYCHAIN" $ORIGINAL_KEYCHAINS
 security import "$WORK/cert.p12" -k "$KEYCHAIN" -P "$REMVEL_CERT_PASSWORD" -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
 
