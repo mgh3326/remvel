@@ -79,6 +79,18 @@ impl Remvel {
         self.store().set_pin(id, pin.as_deref())
     }
 
+    pub fn set_recognized_text(&self, id: i64, text: String) -> Result<()> {
+        self.store().set_recognized_text(id, &text)
+    }
+
+    pub fn recognized_text(&self, id: i64) -> Result<Option<String>> {
+        self.store().recognized_text(id)
+    }
+
+    pub fn unrecognized_images(&self, limit: u32) -> Result<Vec<i64>> {
+        self.store().unrecognized_images(limit as i64)
+    }
+
     pub fn delete(&self, id: i64) -> Result<()> {
         self.store().delete(id)
     }

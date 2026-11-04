@@ -51,6 +51,11 @@ const MIGRATIONS: &[&str] = &[
     // 1: counts for the preview's info line, computed once at ingest.
     "ALTER TABLE items ADD COLUMN char_count INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE items ADD COLUMN line_count INTEGER NOT NULL DEFAULT 0;",
+    // 2: text recognized in images. A row, even an empty one, marks the image as done.
+    "CREATE TABLE item_ocr (
+         item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+         body    TEXT NOT NULL
+     );",
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
