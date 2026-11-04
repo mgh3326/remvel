@@ -53,13 +53,20 @@ fn main() {
 
     let (list_ms, rows) = time(&mut || store.list(0, 50).unwrap().len());
     let (search_ms, sh) = time(&mut || store.search("deploy", &Default::default(), 1000).unwrap().len());
-    let (fuzzy_ms, fz) = time(&mut || store.search_by("gcm", SearchMode::Fuzzy, &Default::default(), 200).unwrap().len());
-    let (exact_ms, ex) = time(&mut || store.search_by("deploy from commit", SearchMode::Exact, &Default::default(), 200).unwrap().len());
-    let (ko_ms, ko) = time(&mut || store.search_by("검색 select", SearchMode::Exact, &Default::default(), 200).unwrap().len());
+    let (fuzzy_ms, fz) =
+        time(&mut || store.search_by("gcm", SearchMode::Fuzzy, &Default::default(), 200).unwrap().len());
+    let (exact_ms, ex) =
+        time(&mut || store.search_by("deploy from commit", SearchMode::Exact, &Default::default(), 200).unwrap().len());
+    let (ko_ms, ko) =
+        time(&mut || store.search_by("검색 select", SearchMode::Exact, &Default::default(), 200).unwrap().len());
     let (prev_ms, pb) = time(&mut || store.preview_text(1, 500_000, 64 * 1024).unwrap().len());
     let db_mb = std::fs::metadata(&path).unwrap().len() as f64 / 1e6;
 
-    println!("items={n} db={db_mb:.0}MB ingest_total={:.1}s ({:.3}ms/item)", ingest.as_secs_f64(), ingest.as_secs_f64() * 1000.0 / n as f64);
+    println!(
+        "items={n} db={db_mb:.0}MB ingest_total={:.1}s ({:.3}ms/item)",
+        ingest.as_secs_f64(),
+        ingest.as_secs_f64() * 1000.0 / n as f64
+    );
     println!("open(load titles)={:.1}ms", open.as_secs_f64() * 1000.0);
     println!("list page 50       {list_ms:.3}ms rows={rows}");
     println!("search 'deploy'    {search_ms:.2}ms hits={sh}");
