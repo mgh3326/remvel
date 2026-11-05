@@ -125,6 +125,12 @@ final class PopupController: NSObject {
     /// Where the selection goes after the next reload: the item with `id` once its row loads,
     /// or else `row`. Set by pinning and deleting so the selection does not jump to the top.
     private var reselect: (id: Int64?, row: Int)?
+    /// Image rows show their thumbnail and the start of their recognized text, loaded once per item.
+    private let rowImages = NSCache<NSNumber, RowImage>()
+    private var loadingRowImages: Set<Int64> = []
+    /// Cached without text: recognition may have finished since, so they are read again after a reload.
+    private var unreadRowImages: Set<Int64> = []
+    private var staleRowImages: Set<Int64> = []
     /// ⌘Y steps through list only, list and preview, and the large preview (↑↓ still move through the list).
     private var previewMode = PreviewMode.hidden
     private var listViews: [NSView] = []
@@ -742,6 +748,7 @@ final class PopupController: NSObject {
     // MARK: Table updates
 
     private func reloadTable() {
+        staleRowImages.formUnion(unreadRowImages)
         preview.searchWords = HistoryModel.parse(model.query, apps: model.knownApps).text
             .split(separator: " ").map(String.init).filter { $0.count >= 2 }
         table.reloadData()
@@ -842,6 +849,26 @@ final class PopupController: NSObject {
         return Kinds.symbol(item.kind)
     }
 
+    /// The cached thumbnail and text, fetching them when missing or stale; the row reloads once they arrive.
+    private func rowImage(for id: Int64) -> RowImage? {
+        let cached = rowImages.object(forKey: NSNumber(value: id))
+        guard cached == nil || staleRowImages.contains(id), loadingRowImages.insert(id).inserted else { return cached }
+        staleRowImages.remove(id)
+        Core.shared.run({ store in (try store.thumbnail(id: id), try store.recognizedText(id: id)) }) { [weak self] result in
+            guard let self else { return }
+            loadingRowImages.remove(id)
+            guard case .success(let (png, text)) = result else { return }
+            let words = text?.split(whereSeparator: \.isWhitespace).prefix(30).joined(separator: " ") ?? ""
+            let image = RowImage(thumbnail: png.flatMap(NSImage.init(data:)) ?? cached?.thumbnail, text: words)
+            rowImages.setObject(image, forKey: NSNumber(value: id))
+            if words.isEmpty { unreadRowImages.insert(id) } else { unreadRowImages.remove(id) }
+            let visible = table.rows(in: table.visibleRect)
+            let rows = IndexSet((visible.location ..< NSMaxRange(visible)).filter { self.model.summary(at: $0)?.id == id })
+            table.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+        }
+        return cached
+    }
+
     private func shortcut(row: Int) -> String {
         row < Self.quickPasteRows ? "⌘\(row + 1)" : ""
     }
@@ -876,10 +903,36 @@ final class PopupController: NSObject {
     }
 }
 
-/// Source icon → one-line title → queue badge → ⌘ shortcut, each in a fixed slot.
+private final class RowImage {
+    let thumbnail: NSImage?
+    /// The first words recognized in the image; empty when none (yet).
+    let text: String
+
+    init(thumbnail: NSImage?, text: String) {
+        self.thumbnail = thumbnail
+        self.text = text
+    }
+}
+
+/// Source icon → image thumbnail (image rows only) → one-line title and detail → queue badge → ⌘ shortcut.
 private final class HistoryCell: NSTableCellView {
     let badge = NSTextField(labelWithString: "")
     let shortcut = NSTextField(labelWithString: "")
+    /// Filled to its frame, so screenshots of one size still look different.
+    private let thumb = NSView()
+    private var textAfterIcon: NSLayoutConstraint!
+    private var textAfterThumb: NSLayoutConstraint!
+
+    var thumbnail: NSImage? {
+        didSet {
+            thumb.layer?.contents = thumbnail
+            thumb.isHidden = thumbnail == nil
+            textAfterIcon.isActive = thumbnail == nil
+            textAfterThumb.isActive = thumbnail != nil
+        }
+    }
+    /// Dimmed after the title, such as an image's recognized text.
+    var detail = "" { didSet { render() } }
 
     /// Title and badge without colours; `render` colours them for the selection state.
     var title = NSAttributedString() { didSet { render() } }
@@ -902,6 +955,14 @@ private final class HistoryCell: NSTableCellView {
             .foregroundColor: selected ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor,
             .paragraphStyle: paragraph,
         ], range: NSRange(location: 0, length: text.length))
+        if !detail.isEmpty {
+            text.append(NSAttributedString(string: "   " + detail, attributes: [
+                .font: NSFont.systemFont(ofSize: 12),
+                .foregroundColor: selected
+                    ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.7) : NSColor.secondaryLabelColor,
+                .paragraphStyle: paragraph,
+            ]))
+        }
         textField?.attributedStringValue = text
         if badgeText.isEmpty, pinned, let pin = Self.pinSymbol {
             let attachment = NSTextAttachment()
@@ -939,18 +1000,29 @@ private final class HistoryCell: NSTableCellView {
         shortcut.textColor = .tertiaryLabelColor
         let image = NSImageView()
         image.imageScaling = .scaleProportionallyUpOrDown
-        for sub in [image, text, badge, shortcut] {
+        thumb.wantsLayer = true
+        thumb.layer?.contentsGravity = .resizeAspectFill
+        thumb.layer?.cornerRadius = 3
+        thumb.layer?.masksToBounds = true
+        thumb.isHidden = true
+        for sub in [image, thumb, text, badge, shortcut] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             addSubview(sub)
         }
         textField = text
         imageView = image
+        textAfterIcon = text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 8)
+        textAfterThumb = text.leadingAnchor.constraint(equalTo: thumb.trailingAnchor, constant: 8)
         NSLayoutConstraint.activate([
+            textAfterIcon,
+            thumb.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 6),
+            thumb.centerYAnchor.constraint(equalTo: centerYAnchor),
+            thumb.widthAnchor.constraint(equalToConstant: 36),
+            thumb.heightAnchor.constraint(equalToConstant: 24),
             image.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             image.centerYAnchor.constraint(equalTo: centerYAnchor),
             image.widthAnchor.constraint(equalToConstant: 16),
             image.heightAnchor.constraint(equalToConstant: 16),
-            text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 8),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
             badge.leadingAnchor.constraint(equalTo: text.trailingAnchor, constant: 6),
             badge.widthAnchor.constraint(equalToConstant: 18),
@@ -976,6 +1048,8 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
         cell.shortcut.stringValue = shortcut(row: row)
         guard let item = model.summary(at: row) else {
             cell.imageView?.image = nil
+            cell.thumbnail = nil
+            cell.detail = ""
             cell.truncatesMiddle = false
             cell.title = NSAttributedString()
             cell.badgeText = ""
@@ -983,6 +1057,9 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
             return cell
         }
         cell.imageView?.image = icon(for: item)
+        let extra = item.kind == .image ? rowImage(for: item.id) : nil
+        cell.thumbnail = extra?.thumbnail
+        cell.detail = extra?.text ?? ""
         cell.truncatesMiddle = item.kind == .link
         cell.title = title(for: item, row: row)
         cell.badgeText = queue.firstIndex(of: item.id).map { "\($0 + 1)" } ?? ""
