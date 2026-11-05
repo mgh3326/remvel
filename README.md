@@ -52,7 +52,8 @@ Press **⇧⌘C** (changeable in Settings) to open the history.
 | ⌥P | Pin or unpin: pinned items stay on top and are never trimmed |
 | ⌥⌫ | Delete the selected item |
 | ⌘K | Actions for the selected item, including pasting it changed (case, JSON, URL, Base64, lines) |
-| ⌘Y | Larger preview |
+| ⌘Y | List only → list and preview → large preview. Settings → Open with picks the starting size |
+| → | Show the preview (at the end of the search text) |
 | Esc | Clear the queue, then the search, then close |
 | ⌥⌘S | Show the sidebar: browse by kind and source app |
 | ⌘, | Settings |

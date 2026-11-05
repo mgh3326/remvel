@@ -173,7 +173,8 @@ final class PreviewController: NSObject {
 
         let kind = newItem?.kind ?? "text"
         let visual = kind == "image" || kind == "color"
-        let link = kind == "link" && Settings.shared.linkPreviews
+        // Hidden (list-only popup): no page is fetched until the preview is shown and asks again.
+        let link = kind == "link" && Settings.shared.linkPreviews && !view.isHidden
         textScroll.isHidden = visual || link || kind == "files"
         imageView.isHidden = !visual
         caption.isHidden = !visual && !link

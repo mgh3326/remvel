@@ -40,6 +40,9 @@ private struct SettingsView: View {
                 Picker("Show popup", selection: $settings.popupPosition) {
                     ForEach(PopupPosition.allCases) { Text($0.label).tag($0) }
                 }
+                Picker("Open with", selection: $settings.popupStart) {
+                    ForEach(PopupStart.allCases) { Text($0.label).tag($0) }
+                }
                 Picker("Keep history", selection: $settings.historyLimit) {
                     ForEach(Settings.historyLimits, id: \.self) { limit in
                         Text(limit == 0 ? "Unlimited" : "\(limit.formatted()) items").tag(limit)

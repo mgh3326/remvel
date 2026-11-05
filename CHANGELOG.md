@@ -6,7 +6,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 
 - ⌘K opens the selected item's actions in a list inside the popup (type to filter, ↑↓, ⏎, Esc): paste, copy, pin, delete, and paste it changed — UPPERCASE, lowercase, Title Case, camelCase, snake_case, kebab-case, trimmed, joined, sorted or de-duplicated lines, formatted or minified JSON, URL and Base64 encoded or decoded. Right-click a row opens the same list.
 - Links show the page's title, site and image. The page is loaded only when you select the link, never for links that look like sign-in, reset or token links, and Settings → Privacy turns it off.
-- ⌘Y shows the preview across the whole popup; ↑↓ still move through the list.
+- The popup opens small, as a list (520 × 480), so it covers less of the screen. ⌘Y adds the preview, then shows it across the popup, then goes back to the list; → at the end of the search text also shows the preview. Settings → Open with: list only, list and preview, or as you last left it. Link pages are not loaded while the preview is hidden.
 - Deleted rows fade out.
 - A copy of several files shows every file as a tile and is titled "3 files: …". Click a tile, or pick it under ⌘K → Paste One File, to paste that file alone. Files that were moved or deleted are greyed out.
 - Runs on Intel Macs too (universal build).

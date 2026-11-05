@@ -82,8 +82,11 @@ private final class Panel: NSPanel {
 /// It is a non-activating panel so the app the user came from stays frontmost for pasting.
 /// Its size is fixed per mode; content scales or truncates to fit and never resizes it.
 final class PopupController: NSObject {
-    static let compactSize = NSSize(width: 960, height: 600)
-    static let expandedSize = NSSize(width: 1200, height: 700)
+    /// The list alone; the sidebar adds `sidebarExtra`.
+    static let listOnlySize = NSSize(width: 520, height: 480)
+    /// The list and the preview, or the large preview.
+    static let previewSize = NSSize(width: 960, height: 600)
+    static let sidebarExtra = NSSize(width: 240, height: 100)
     static let sidebarWidth: CGFloat = 210
     static let listWidth: CGFloat = 396
     static let rowHeight: CGFloat = 30
@@ -109,6 +112,9 @@ final class PopupController: NSObject {
     private let table = HistoryTable()
     private let actionPanel = ActionPanel()
     private let footer = NSTextField(labelWithString: "")
+    private let settingsHint = NSTextField(labelWithString: "")
+    /// Between the list and the preview.
+    private let divider = NSBox()
     private let sidebar = SidebarController()
     private var sidebarWidthConstraint: NSLayoutConstraint!
     private var facets = Facets(kinds: [], apps: [])
@@ -119,11 +125,13 @@ final class PopupController: NSObject {
     /// Where the selection goes after the next reload: the item with `id` once its row loads,
     /// or else `row`. Set by pinning and deleting so the selection does not jump to the top.
     private var reselect: (id: Int64?, row: Int)?
-    /// ⌘Y: the preview takes the list's place; ↑↓ still move through the list.
-    private var largePreview = false
+    /// ⌘Y steps through list only, list and preview, and the large preview (↑↓ still move through the list).
+    private var previewMode = PreviewMode.hidden
     private var listViews: [NSView] = []
     private var previewBesideList: NSLayoutConstraint!
     private var previewAlone: NSLayoutConstraint!
+    private var listBesidePreview: NSLayoutConstraint!
+    private var listAlone: NSLayoutConstraint!
 
     private var expanded: Bool {
         get { UserDefaults.standard.bool(forKey: "popupExpanded") }
@@ -132,7 +140,7 @@ final class PopupController: NSObject {
 
     override init() {
         panel = Panel(
-            contentRect: NSRect(origin: .zero, size: Self.compactSize),
+            contentRect: NSRect(origin: .zero, size: Self.listOnlySize),
             styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
             backing: .buffered,
             defer: true
@@ -152,7 +160,7 @@ final class PopupController: NSObject {
         panel.onTogglePin = { [weak self] in self.map { $0.togglePin(row: $0.table.selectedRow) } }
         panel.onCopyItem = { [weak self] in self?.pasteSelected(mode: .copyOnly) }
         panel.onShowActions = { [weak self] in self?.showActions() }
-        panel.onToggleLargePreview = { [weak self] in self.map { $0.setLargePreview(!$0.largePreview) } }
+        panel.onToggleLargePreview = { [weak self] in self.map { $0.setPreviewMode($0.previewMode.next) } }
         preview.onPickFile = { [weak self] path in self?.pasteFiles([path], ofRow: self?.table.selectedRow ?? -1) }
         sidebar.onSelect = { [weak self] filter in self?.model.filter = filter }
     }
@@ -181,7 +189,11 @@ final class PopupController: NSObject {
     }
 
     private func open() {
-        setLargePreview(false)
+        switch settings.popupStart {
+        case .list: setPreviewMode(.hidden, resize: false)
+        case .preview: setPreviewMode(.beside, resize: false)
+        case .last: setPreviewMode(Self.lastPreviewMode, resize: false)
+        }
         // Screen sharing, recordings and screenshots see an empty space instead, when asked.
         panel.sharingType = settings.hideFromScreenSharing ? .none : .readOnly
         searchField.stringValue = ""
@@ -196,10 +208,10 @@ final class PopupController: NSObject {
     }
 
     /// For `Snapshot`: lays the panel out as `open()` would, without showing it or taking focus.
-    func prepareSnapshot(query: String, expanded: Bool, large: Bool = false, actions: Bool = false, queueRows: [Int],
+    func prepareSnapshot(query: String, expanded: Bool, previewMode: PreviewMode, actions: Bool = false, queueRows: [Int],
                          then: @escaping (NSView) -> Void) {
         self.expanded = expanded
-        setLargePreview(large)
+        setPreviewMode(previewMode, resize: false)
         searchField.stringValue = query
         queue = []
         model.filter = Filter(kinds: [], apps: [])
@@ -236,6 +248,11 @@ final class PopupController: NSObject {
 
     private func toggleSidebar() {
         expanded.toggle()
+        resizeKeepingTopLeft()
+    }
+
+    /// Grows or shrinks the open popup to its mode's size, keeping its top-left corner where it is.
+    private func resizeKeepingTopLeft() {
         let top = panel.frame.maxY
         applyMode()
         var frame = panel.frame
@@ -245,7 +262,10 @@ final class PopupController: NSObject {
     }
 
     private func applyMode() {
-        let size = expanded ? Self.expandedSize : Self.compactSize
+        let base = previewMode == .hidden ? Self.listOnlySize : Self.previewSize
+        let size = expanded
+            ? NSSize(width: base.width + Self.sidebarExtra.width, height: base.height + Self.sidebarExtra.height)
+            : base
         sidebarWidthConstraint.constant = expanded ? Self.sidebarWidth : 0
         sidebar.view.isHidden = !expanded
         sidebarButton.state = expanded ? .on : .off
@@ -373,8 +393,8 @@ final class PopupController: NSObject {
                 action(item.kind == "image" ? "Paste Text in Image" : item.kind == "files" ? "Paste Paths" : "Paste as Plain Text",
                        "⇧⏎") { [weak self] in self?.paste(rows: [row], mode: .plainText) },
                 action("Copy", "⌥⏎") { [weak self] in self?.paste(rows: [row], mode: .copyOnly) },
-                action(largePreview ? "Smaller Preview" : "Larger Preview", "⌘Y") { [weak self] in
-                    self.map { $0.setLargePreview(!$0.largePreview) }
+                action(Self.nextModeTitle[previewMode.next]!, "⌘Y") { [weak self] in
+                    self.map { $0.setPreviewMode($0.previewMode.next) }
                 },
                 action(item.pin == nil ? "Pin" : "Unpin", "⌥P") { [weak self] in self?.togglePin(row: row) },
                 action("Delete", "⌥⌫") { [weak self] in self?.delete(row: row) },
@@ -414,11 +434,35 @@ final class PopupController: NSObject {
         }
     }
 
-    private func setLargePreview(_ on: Bool) {
-        largePreview = on
-        listViews.forEach { $0.isHidden = on }
-        previewBesideList.isActive = !on
-        previewAlone.isActive = on
+    private static let nextModeTitle: [PreviewMode: String] =
+        [.hidden: "List Only", .beside: "Show Preview", .large: "Larger Preview"]
+    private static let nextModeHint: [PreviewMode: String] = [.hidden: "Smaller", .beside: "Preview", .large: "Larger"]
+
+    private static var lastPreviewMode: PreviewMode {
+        get { UserDefaults.standard.string(forKey: "lastPreviewMode").flatMap(PreviewMode.init) ?? .hidden }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "lastPreviewMode") }
+    }
+
+    /// `resize` is false while opening, which sizes the popup itself.
+    private func setPreviewMode(_ mode: PreviewMode, resize: Bool = true) {
+        let wasHidden = previewMode == .hidden
+        previewMode = mode
+        Self.lastPreviewMode = mode
+        // Deactivate before activating, so the two width rules never hold at once.
+        [listBesidePreview, listAlone, previewBesideList, previewAlone].forEach { $0.isActive = false }
+        listViews.forEach { $0.isHidden = mode == .large }
+        divider.isHidden = mode != .beside
+        preview.view.isHidden = mode == .hidden
+        switch mode {
+        case .hidden: listAlone.isActive = true
+        case .beside: listBesidePreview.isActive = true; previewBesideList.isActive = true
+        case .large: listBesidePreview.isActive = true; previewAlone.isActive = true
+        }
+        // A hidden preview loads nothing, links in particular; catch up when it appears.
+        if wasHidden, mode != .hidden {
+            preview.show(model.summary(at: table.selectedRow), force: true)
+        }
+        if resize { resizeKeepingTopLeft() }
         updateFooter()
     }
 
@@ -475,13 +519,12 @@ final class PopupController: NSObject {
         tableScroll.hasVerticalScroller = true
         tableScroll.drawsBackground = false
 
-        let divider = NSBox()
         divider.boxType = .separator
         let footerLine = NSBox()
         footerLine.boxType = .separator
 
         footer.lineBreakMode = .byTruncatingTail
-        let settingsHint = NSTextField(labelWithAttributedString: Self.hints([("Settings", "⌘,")]))
+        settingsHint.attributedStringValue = Self.hints([("Settings", "⌘,")])
 
         for label in [footer, listHeader, listCount, settingsHint] {
             // Labels truncate; they must never widen the panel.
@@ -499,10 +542,12 @@ final class PopupController: NSObject {
         }
         sidebarWidthConstraint = sidebar.view.widthAnchor.constraint(equalToConstant: 0)
         let listLeading = sidebar.view.trailingAnchor
-        listViews = [listHeader, listCount, tableScroll, divider]
+        listViews = [listHeader, listCount, tableScroll]
         previewBesideList = preview.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 16)
         previewAlone = preview.view.leadingAnchor.constraint(equalTo: listLeading, constant: 16)
-        previewBesideList.isActive = true
+        listBesidePreview = tableScroll.widthAnchor.constraint(equalToConstant: Self.listWidth)
+        listAlone = tableScroll.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -4)
+        listAlone.isActive = true
 
         NSLayoutConstraint.activate([
             // Search band, 56 pt.
@@ -531,7 +576,6 @@ final class PopupController: NSObject {
             listCount.leadingAnchor.constraint(greaterThanOrEqualTo: listHeader.trailingAnchor, constant: 8),
             tableScroll.topAnchor.constraint(equalTo: listHeader.bottomAnchor, constant: 4),
             tableScroll.leadingAnchor.constraint(equalTo: listLeading, constant: 4),
-            tableScroll.widthAnchor.constraint(equalToConstant: Self.listWidth),
             tableScroll.bottomAnchor.constraint(equalTo: footerLine.topAnchor, constant: -4),
 
             divider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
@@ -751,9 +795,15 @@ final class PopupController: NSObject {
             default:
                 hints = [("⏎", "Paste"), ("⇧⏎", "Plain text"), ("⌥⏎", "Copy")]
             }
-            hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"), ("⌘K", "Actions"),
-                      ("⌘Y", largePreview ? "Smaller" : "Larger")]
+            if previewMode == .hidden {
+                // The list-only popup is narrow; ⌘K lists the rest.
+                hints = Array(hints.prefix(2)) + [("⌘K", "Actions"), ("⌘Y", "Preview")]
+            } else {
+                hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"), ("⌘K", "Actions"),
+                          ("⌘Y", Self.nextModeHint[previewMode.next]!)]
+            }
         }
+        settingsHint.isHidden = previewMode == .hidden
         footer.attributedStringValue = Self.hints(hints.map { ($1, $0) })
     }
 
@@ -949,6 +999,10 @@ extension PopupController: NSSearchFieldDelegate {
             select(row: table.selectedRow - 1)
         case #selector(NSResponder.moveDown(_:)):
             select(row: table.selectedRow + 1)
+        // → past the end of the search text opens the preview, as in Maccy.
+        case #selector(NSResponder.moveRight(_:))
+            where previewMode == .hidden && textView.selectedRange() == NSRange(location: textView.string.utf16.count, length: 0):
+            setPreviewMode(.beside)
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             pasteSelected(mode: flags.contains(.option) ? .copyOnly : flags.contains(.shift) ? .plainText : .original)

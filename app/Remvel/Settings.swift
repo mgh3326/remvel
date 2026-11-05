@@ -15,6 +15,40 @@ enum PopupPosition: String, CaseIterable, Identifiable {
     }
 }
 
+/// How big the popup opens. ⌘Y steps through the sizes while it is open.
+enum PreviewMode: String, CaseIterable, Identifiable {
+    /// The list alone, to cover as little of the screen as possible.
+    case hidden
+    /// The list with the preview beside it.
+    case beside
+    /// The preview alone, across the popup.
+    case large
+
+    var id: String { rawValue }
+
+    var next: PreviewMode {
+        switch self {
+        case .hidden: .beside
+        case .beside: .large
+        case .large: .hidden
+        }
+    }
+}
+
+enum PopupStart: String, CaseIterable, Identifiable {
+    case list, preview, last
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .list: "List only"
+        case .preview: "List and preview"
+        case .last: "As I last left it"
+        }
+    }
+}
+
 /// A global shortcut, stored the way most Mac clipboard apps store it: Carbon key code and modifiers.
 struct KeyCombo: Codable, Equatable {
     var carbonKeyCode: Int
@@ -73,6 +107,9 @@ final class Settings: ObservableObject {
     @Published var popupPosition: PopupPosition {
         didSet { defaults.set(popupPosition.rawValue, forKey: "popupPosition") }
     }
+    @Published var popupStart: PopupStart {
+        didSet { defaults.set(popupStart.rawValue, forKey: "popupStart") }
+    }
     /// 0 keeps everything.
     @Published var historyLimit: Int { didSet { defaults.set(historyLimit, forKey: "historyLimit") } }
     @Published var showInDock: Bool { didSet { defaults.set(showInDock, forKey: "showInDock") } }
@@ -99,6 +136,7 @@ final class Settings: ObservableObject {
         ignoredApps = defaults.stringArray(forKey: "ignoredApps") ?? Self.seededIgnoredApps
         ignoreRemoteClipboard = defaults.bool(forKey: "ignoreRemoteClipboard")
         popupPosition = defaults.string(forKey: "popupPosition").flatMap(PopupPosition.init) ?? .center
+        popupStart = defaults.string(forKey: "popupStart").flatMap(PopupStart.init) ?? .list
         historyLimit = defaults.integer(forKey: "historyLimit")
         showInDock = defaults.bool(forKey: "showInDock")
         nightlyUpdates = defaults.bool(forKey: "nightlyUpdates")
