@@ -20,6 +20,12 @@ final class PreviewController: NSObject {
     private let imageView = NSImageView()
     /// Pixel size under an image, or the colour's value under a swatch.
     private let caption = NSTextField(labelWithString: "")
+    /// Text read from an image, under it: what search matched, and what ⇧⏎ pastes.
+    private let ocrScroll = NSTextView.scrollableTextView()
+    private var ocrView: NSTextView { ocrScroll.documentView as! NSTextView }
+    private let ocrLine = NSBox()
+    private var captionAtBottom: NSLayoutConstraint!
+    private var captionAboveText: NSLayoutConstraint!
     /// Quick Look for copied files: documents, PDFs, videos, folders.
     private let fileView = QLPreviewView(frame: .zero, style: .compact)!
     /// Several copied files at once, as tiles.
@@ -80,6 +86,14 @@ final class PreviewController: NSObject {
         )
 
         imageView.imageScaling = .scaleProportionallyDown
+        ocrView.isEditable = false
+        ocrView.isSelectable = true
+        ocrView.drawsBackground = false
+        ocrView.font = .systemFont(ofSize: 13)
+        ocrView.textColor = .labelColor
+        ocrView.textContainerInset = NSSize(width: 10, height: 8)
+        ocrScroll.drawsBackground = false
+        ocrLine.boxType = .separator
         caption.alignment = .center
         fileView.shouldCloseWithWindow = false
 
@@ -104,7 +118,7 @@ final class PreviewController: NSObject {
         let content = card.contentView!
         linkView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         linkView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        for sub in [textScroll, imageView, caption, fileView, fileGrid, linkView, urlLabel] {
+        for sub in [textScroll, imageView, caption, ocrLine, ocrScroll, fileView, fileGrid, linkView, urlLabel] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(sub)
         }
@@ -112,6 +126,8 @@ final class PreviewController: NSObject {
             sub.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(sub)
         }
+        captionAtBottom = caption.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10)
+        captionAboveText = caption.bottomAnchor.constraint(equalTo: ocrLine.topAnchor, constant: -8)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: view.topAnchor),
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 2),
@@ -139,7 +155,14 @@ final class PreviewController: NSObject {
             imageView.bottomAnchor.constraint(equalTo: caption.topAnchor, constant: -8),
             caption.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
             caption.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
-            caption.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
+            captionAtBottom,
+            ocrLine.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            ocrLine.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            ocrScroll.topAnchor.constraint(equalTo: ocrLine.bottomAnchor),
+            ocrScroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 2),
+            ocrScroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -2),
+            ocrScroll.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -2),
+            ocrScroll.heightAnchor.constraint(equalTo: content.heightAnchor, multiplier: 0.4),
 
             linkView.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
             linkView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
@@ -173,6 +196,7 @@ final class PreviewController: NSObject {
         imageView.image = nil
         caption.stringValue = ""
         caption.toolTip = nil
+        showRecognizedText(nil)
         fileView.previewItem = nil
         fileGrid.paths = []
         filePaths = []
@@ -360,9 +384,19 @@ final class PreviewController: NSObject {
             self.imageView.image = NSImage(cgImage: image, size: .zero)
             let words = text?.split(whereSeparator: \.isWhitespace).count ?? 0
             self.caption.stringValue = "\(Int(size.width)) × \(Int(size.height)) px"
-                + (words > 0 ? " · \(words) words found, searchable" : "")
-            self.caption.toolTip = words > 0 ? text : nil
+                + (words == 1 ? " · 1 word found, searchable" : words > 1 ? " · \(words) words found, searchable" : "")
+            self.showRecognizedText(words > 0 ? text : nil)
         }
+    }
+
+    /// The image keeps the top of the card; its text takes the bottom 40% and scrolls.
+    private func showRecognizedText(_ text: String?) {
+        ocrView.string = text ?? ""
+        ocrView.scroll(.zero)
+        ocrLine.isHidden = text == nil
+        ocrScroll.isHidden = text == nil
+        captionAtBottom.isActive = text == nil
+        captionAboveText.isActive = text != nil
     }
 
     /// App · First · Last · counts · copies, in that fixed order.
