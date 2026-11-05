@@ -35,6 +35,9 @@ final class PreviewController: NSObject {
     private let linkView = LPLinkView(frame: .zero)
     private var linkFetch: LPMetadataProvider?
     private static let linkCache = NSCache<NSURL, LPLinkMetadata>()
+    /// The whole address, large, while the page gives nothing better than a title: sign-in walls,
+    /// bot checks and private links preview as a bare card, and the address is what tells them apart.
+    private let urlLabel = NSTextField(wrappingLabelWithString: "")
     private let meta = NSTextField(labelWithString: "")
 
     private var item: ItemSummary?
@@ -87,6 +90,10 @@ final class PreviewController: NSObject {
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         caption.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        urlLabel.isSelectable = true
+        urlLabel.lineBreakMode = .byCharWrapping
+        urlLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        urlLabel.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         caption.textColor = .secondaryLabelColor
         // A large image must shrink into the card, never push the card (and the panel) bigger.
         for orientation in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
@@ -97,7 +104,7 @@ final class PreviewController: NSObject {
         let content = card.contentView!
         linkView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         linkView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        for sub in [textScroll, imageView, caption, fileView, fileGrid, linkView] {
+        for sub in [textScroll, imageView, caption, fileView, fileGrid, linkView, urlLabel] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(sub)
         }
@@ -138,6 +145,10 @@ final class PreviewController: NSObject {
             linkView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
             linkView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
             linkView.bottomAnchor.constraint(lessThanOrEqualTo: caption.topAnchor, constant: -8),
+            urlLabel.topAnchor.constraint(equalTo: linkView.bottomAnchor, constant: 16),
+            urlLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            urlLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            urlLabel.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12),
 
             fileView.topAnchor.constraint(equalTo: content.topAnchor, constant: 1),
             fileView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 1),
@@ -181,6 +192,7 @@ final class PreviewController: NSObject {
         fileView.isHidden = kind != "files" || (newItem?.lineCount ?? 0) > 1
         fileGrid.isHidden = kind != "files" || (newItem?.lineCount ?? 0) <= 1
         linkView.isHidden = !link
+        urlLabel.isHidden = true
 
         guard let newItem else { return }
         switch kind {
@@ -217,20 +229,22 @@ final class PreviewController: NSObject {
             guard let url = URL(string: text), url.scheme == "http" || url.scheme == "https" else {
                 self.linkView.isHidden = true
                 self.caption.isHidden = true
+                self.urlLabel.isHidden = true
                 self.textScroll.isHidden = false
                 self.loadNextChunk()
                 return
             }
             self.caption.stringValue = text
             self.caption.toolTip = text
+            self.urlLabel.attributedStringValue = Self.styledAddress(url, text)
             if let cached = Self.linkCache.object(forKey: url as NSURL) {
-                self.linkView.metadata = cached
+                self.showLink(cached)
                 return
             }
             let placeholder = LPLinkMetadata()
             placeholder.originalURL = url
             placeholder.url = url
-            self.linkView.metadata = placeholder
+            self.showLink(placeholder)
             guard !Self.looksPrivate(url) else { return }
             let fetch = LPMetadataProvider()
             fetch.timeout = 6
@@ -239,10 +253,34 @@ final class PreviewController: NSObject {
                 DispatchQueue.main.async {
                     guard let metadata else { return }
                     Self.linkCache.setObject(metadata, forKey: url as NSURL)
-                    if gen == self.generation { self.linkView.metadata = metadata }
+                    if gen == self.generation { self.showLink(metadata) }
                 }
             }
         }
+    }
+
+    /// A page with a picture gets the full card and the address as a caption; one without
+    /// (unfetched, blocked, or behind a sign-in) gets a slim card with the address large below it.
+    private func showLink(_ metadata: LPLinkMetadata) {
+        linkView.metadata = metadata
+        let rich = metadata.imageProvider != nil || metadata.videoProvider != nil
+        urlLabel.isHidden = rich
+        caption.isHidden = !rich
+    }
+
+    /// Scheme and query dimmed, host bold, path plain; percent-escapes decoded so non-Latin paths read as text.
+    private static func styledAddress(_ url: URL, _ text: String) -> NSAttributedString {
+        let readable = text.removingPercentEncoding ?? text
+        let result = NSMutableAttributedString(string: readable, attributes: [
+            .font: NSFont.systemFont(ofSize: 15), .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        guard let host = url.host, let hostRange = readable.range(of: host) else { return result }
+        let queryStart = readable[hostRange.upperBound...].firstIndex { $0 == "?" || $0 == "#" } ?? readable.endIndex
+        result.addAttributes([.font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.labelColor],
+                             range: NSRange(hostRange, in: readable))
+        result.addAttribute(.foregroundColor, value: NSColor.labelColor,
+                            range: NSRange(hostRange.upperBound..<queryStart, in: readable))
+        return result
     }
 
     /// Links that may be single-use or carry credentials are never opened just to preview them:
