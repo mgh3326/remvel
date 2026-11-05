@@ -26,4 +26,26 @@ final class Core {
             DispatchQueue.main.async { then(result) }
         }
     }
+
+    /// For writes nobody waits on: a failure is logged as "`what` failed", and `then` runs on the
+    /// main queue either way. Use this instead of `run` with a callback that drops the result.
+    func perform(_ what: String, _ work: @escaping (Remvel) throws -> Void, then: (() -> Void)? = nil) {
+        run(work) { result in
+            if case .failure(let error) = result {
+                NSLog("Remvel: \(what) failed: \(error)")
+            }
+            then?()
+        }
+    }
+}
+
+extension Date {
+    /// Unix milliseconds, the core's unit for every time.
+    var unixMillis: Int64 {
+        Int64(timeIntervalSince1970 * 1000)
+    }
+
+    init(unixMillis: Int64) {
+        self.init(timeIntervalSince1970: TimeInterval(unixMillis) / 1000)
+    }
 }

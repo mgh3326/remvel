@@ -3,30 +3,32 @@ import AppKit
 /// Display names, symbols and `#tags` for the item kinds the core assigns.
 enum Kinds {
     struct Info {
-        let kind: String
+        let kind: Kind
         let name: String
         let symbol: String
         let tag: String
     }
 
-    static let all: [Info] = [
-        Info(kind: "text", name: "Text", symbol: "text.alignleft", tag: "text"),
-        Info(kind: "link", name: "Links", symbol: "link", tag: "link"),
-        Info(kind: "image", name: "Images", symbol: "photo", tag: "image"),
-        Info(kind: "files", name: "Files", symbol: "doc", tag: "file"),
-        Info(kind: "color", name: "Colors", symbol: "paintpalette", tag: "color"),
-        Info(kind: "rich", name: "Rich Text", symbol: "textformat", tag: "rich"),
-    ]
+    /// Every kind, in menu order.
+    static let all: [Info] = [Kind.text, .link, .image, .files, .color, .rich].map(Kinds.info)
 
     /// `#tag` words and the kind each selects; a few aliases on top of the canonical tags.
-    static let tags: [String: String] = Dictionary(uniqueKeysWithValues: all.map { ($0.tag, $0.kind) })
-        .merging(["url": "link", "img": "image", "files": "files", "colour": "color"]) { old, _ in old }
+    static let tags: [String: Kind] = Dictionary(uniqueKeysWithValues: all.map { ($0.tag, $0.kind) })
+        .merging(["url": .link, "img": .image, "files": .files, "colour": .color]) { old, _ in old }
 
-    static func info(_ kind: String) -> Info {
-        all.first { $0.kind == kind } ?? Info(kind: kind, name: kind.capitalized, symbol: "questionmark.square", tag: kind)
+    /// Exhaustive, so a kind added in the core does not build until it has a name and symbol here.
+    static func info(_ kind: Kind) -> Info {
+        switch kind {
+        case .text: Info(kind: kind, name: "Text", symbol: "text.alignleft", tag: "text")
+        case .link: Info(kind: kind, name: "Links", symbol: "link", tag: "link")
+        case .image: Info(kind: kind, name: "Images", symbol: "photo", tag: "image")
+        case .files: Info(kind: kind, name: "Files", symbol: "doc", tag: "file")
+        case .color: Info(kind: kind, name: "Colors", symbol: "paintpalette", tag: "color")
+        case .rich: Info(kind: kind, name: "Rich Text", symbol: "textformat", tag: "rich")
+        }
     }
 
-    static func symbol(_ kind: String) -> NSImage? {
+    static func symbol(_ kind: Kind) -> NSImage? {
         NSImage(systemSymbolName: info(kind).symbol, accessibilityDescription: info(kind).name)
     }
 

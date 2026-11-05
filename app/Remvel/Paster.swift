@@ -18,8 +18,8 @@ enum Paster {
         guard !ids.isEmpty else { return }
         Core.shared.run({ store in try ids.map { try contents(of: $0, mode: mode, store: store) } }) { result in
             guard case .success(let items) = result else { return }
-            let now = Int64(Date().timeIntervalSince1970 * 1000)
-            Core.shared.run({ store in try ids.forEach { try store.touch(id: $0, at: now) } }) { _ in }
+            let now = Date().unixMillis
+            Core.shared.perform("touch", { store in try ids.forEach { try store.touch(id: $0, at: now) } })
 
             guard mode != .copyOnly, AXIsProcessTrusted() else {
                 write(items.last ?? [])
@@ -37,8 +37,8 @@ enum Paster {
 
     /// Pastes text made from item `id`, e.g. by a transform; the item counts as used.
     static func paste(text: String, from id: Int64) {
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        Core.shared.run({ try $0.touch(id: id, at: now) }) { _ in }
+        let now = Date().unixMillis
+        Core.shared.perform("touch", { try $0.touch(id: id, at: now) })
         write([Rep(uti: NSPasteboard.PasteboardType.string.rawValue, data: Data(text.utf8))])
         guard AXIsProcessTrusted() else {
             Onboarding.shared.show()
@@ -49,8 +49,8 @@ enum Paster {
 
     /// Pastes some of the files of item `id`; the item counts as used.
     static func paste(files: [String], from id: Int64) {
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        Core.shared.run({ try $0.touch(id: id, at: now) }) { _ in }
+        let now = Date().unixMillis
+        Core.shared.perform("touch", { try $0.touch(id: id, at: now) })
         write([Rep(uti: PasteboardWatcher.filePathsUTI, data: Data(files.joined(separator: "\n").utf8))])
         guard AXIsProcessTrusted() else {
             Onboarding.shared.show()

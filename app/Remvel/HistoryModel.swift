@@ -5,9 +5,9 @@ import Foundation
 final class HistoryModel {
     static let pageSize = 100
     /// Most results for search text.
-    static let searchLimit: UInt32 = 1_000
+    static let searchLimit: Int64 = 1_000
     /// A filter with no text lists that many items at most, in browse order.
-    static let filterLimit: UInt32 = 10_000
+    static let filterLimit: Int64 = 10_000
 
     /// Row count or order changed; reload everything.
     var onReload: (() -> Void)?
@@ -46,11 +46,11 @@ final class HistoryModel {
     /// Source apps that `@name` can pick, most used first.
     var knownApps: [String] = []
 
-    /// Splits "#image @safari cat" into kinds ["image"], apps ["com.apple.Safari"] and text "cat".
+    /// Splits "#image @safari cat" into kinds [.image], apps ["com.apple.Safari"] and text "cat".
     /// `@` matches the start of an app's name, or of the last part of its bundle id, among `apps`;
     /// the most used app wins. Unknown tags stay in the text.
-    static func parse(_ query: String, apps: [String] = []) -> (text: String, kinds: [String], apps: [String]) {
-        var kinds: [String] = []
+    static func parse(_ query: String, apps: [String] = []) -> (text: String, kinds: [Kind], apps: [String]) {
+        var kinds: [Kind] = []
         var picked: [String] = []
         var words: [Substring] = []
         for word in query.split(separator: " ", omittingEmptySubsequences: true) {

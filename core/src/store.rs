@@ -3,7 +3,7 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::search::{Entry, TitleIndex};
-use crate::{Error, Result, schema};
+use crate::{Error, Kind, Result, schema};
 
 const TITLE_MAX_CHARS: usize = 300;
 
@@ -58,7 +58,7 @@ pub struct IngestResult {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemSummary {
     pub id: i64,
-    pub kind: String,
+    pub kind: Kind,
     pub title: String,
     pub app: Option<String>,
     pub text_bytes: i64,
@@ -70,6 +70,7 @@ pub struct ItemSummary {
     pub line_count: i64,
 }
 
+/// A source app and how many items came from it.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Facet {
     pub name: String,
@@ -77,9 +78,21 @@ pub struct Facet {
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct KindFacet {
+    pub kind: Kind,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Facets {
-    pub kinds: Vec<Facet>,
+    pub kinds: Vec<KindFacet>,
     pub apps: Vec<Facet>,
+}
+
+/// The pin value for an item pinned at `at` (Unix ms). Pins sort as strings, so values are
+/// fixed-width and the first pinned stays first.
+pub fn pin_value(at: i64) -> String {
+    format!("{:013}", at.max(0))
 }
 
 pub struct Store {
@@ -111,7 +124,7 @@ impl Store {
             Ok(Entry::new(
                 r.get(0)?,
                 r.get(1)?,
-                &r.get::<_, String>(2)?,
+                r.get(2)?,
                 r.get::<_, Option<String>>(3)?.as_deref(),
                 r.get(4)?,
                 r.get::<_, Option<String>>(5)?.as_deref(),
@@ -264,7 +277,12 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Pins sort as strings, so callers pass fixed-width values (the app uses zero-padded milliseconds).
+    /// Pins or unpins an item; a new pin goes after the existing ones (see `pin_value`).
+    pub fn set_pinned(&mut self, id: i64, pinned: bool, at: i64) -> Result<()> {
+        self.set_pin(id, pinned.then(|| pin_value(at)).as_deref())
+    }
+
+    /// Pins sort as strings, so values must be fixed-width. The app goes through `set_pinned`.
     pub fn set_pin(&mut self, id: i64, pin: Option<&str>) -> Result<()> {
         let changed = self.conn.execute("UPDATE items SET pin = ?2 WHERE id = ?1", params![id, pin])?;
         if changed == 0 {
@@ -324,10 +342,10 @@ impl Store {
     /// Images that text recognition has not seen yet, newest first.
     pub fn unrecognized_images(&self, limit: i64) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id FROM items WHERE kind = 'image' AND id NOT IN (SELECT item_id FROM item_ocr)
-             ORDER BY last_copied_at DESC LIMIT ?1",
+            "SELECT id FROM items WHERE kind = ?2 AND id NOT IN (SELECT item_id FROM item_ocr)
+             ORDER BY last_copied_at DESC, id DESC LIMIT ?1",
         )?;
-        let rows = stmt.query_map([limit], |r| r.get(0))?;
+        let rows = stmt.query_map(params![limit, Kind::Image], |r| r.get(0))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -362,18 +380,15 @@ impl Store {
 
     /// Item counts per kind and per source app, largest first, for browsing by facet.
     pub fn facets(&self, max_apps: i64) -> Result<Facets> {
-        let count = |sql: &str, limit: i64| -> Result<Vec<Facet>> {
-            let mut stmt = self.conn.prepare_cached(sql)?;
-            let rows = stmt.query_map([limit], |r| Ok(Facet { name: r.get(0)?, count: r.get(1)? }))?;
-            Ok(rows.collect::<rusqlite::Result<_>>()?)
-        };
-        Ok(Facets {
-            kinds: count("SELECT kind, count(*) FROM items GROUP BY kind ORDER BY 2 DESC LIMIT ?1", -1)?,
-            apps: count(
-                "SELECT app, count(*) FROM items WHERE app IS NOT NULL GROUP BY app ORDER BY 2 DESC LIMIT ?1",
-                max_apps,
-            )?,
-        })
+        // Ties break by name, so equal counts keep one order.
+        let mut stmt = self.conn.prepare_cached("SELECT kind, count(*) FROM items GROUP BY kind ORDER BY 2 DESC, 1")?;
+        let kinds = stmt.query_map([], |r| Ok(KindFacet { kind: r.get(0)?, count: r.get(1)? }))?;
+        let kinds = kinds.collect::<rusqlite::Result<_>>()?;
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT app, count(*) FROM items WHERE app IS NOT NULL GROUP BY app ORDER BY 2 DESC, 1 LIMIT ?1",
+        )?;
+        let apps = stmt.query_map([max_apps], |r| Ok(Facet { name: r.get(0)?, count: r.get(1)? }))?;
+        Ok(Facets { kinds, apps: apps.collect::<rusqlite::Result<_>>()? })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -422,20 +437,20 @@ fn find<'a>(reps: &'a [Rep], uti: &str) -> Option<&'a [u8]> {
     reps.iter().find(|r| r.uti == uti).map(|r| r.data.as_slice())
 }
 
-fn classify(reps: &[Rep], text: &str) -> &'static str {
+fn classify(reps: &[Rep], text: &str) -> Kind {
     let has = |uti: &str| reps.iter().any(|r| r.uti == uti);
     if has(UTI_FILE_URL) || has(UTI_FILE_PATHS) {
-        "files"
+        Kind::Files
     } else if IMAGE_UTIS.iter().any(|u| has(u)) && !has(UTI_TEXT) {
-        "image"
+        Kind::Image
     } else if is_link(text) {
-        "link"
+        Kind::Link
     } else if is_color(text) {
-        "color"
+        Kind::Color
     } else if has(UTI_HTML) || has(UTI_RTF) {
-        "rich"
+        Kind::Rich
     } else {
-        "text"
+        Kind::Text
     }
 }
 
@@ -475,7 +490,7 @@ fn plain_text(capture: &Capture) -> String {
     String::new()
 }
 
-fn make_title(text: &str, kind: &str) -> String {
+fn make_title(text: &str, kind: Kind) -> String {
     let mut title = String::with_capacity(TITLE_MAX_CHARS);
     let mut last_space = true;
     for ch in text.chars() {
@@ -500,7 +515,7 @@ fn make_title(text: &str, kind: &str) -> String {
 fn file_title(paths: &str) -> String {
     let names: Vec<&str> = paths.lines().filter(|l| !l.is_empty()).map(|p| p.rsplit('/').next().unwrap_or(p)).collect();
     let count = if names.len() > 1 { format!("{} files: ", names.len()) } else { String::new() };
-    make_title(&(count + &names.join(", ")), "files")
+    make_title(&(count + &names.join(", ")), Kind::Files)
 }
 
 /// Drops the partial scalars at both ends of a byte window.
@@ -565,7 +580,7 @@ mod tests {
         };
         let id = store.ingest(capture).unwrap().id;
         let row = &store.list(0, 1).unwrap()[0];
-        assert_eq!(row.kind, "rich");
+        assert_eq!(row.kind, Kind::Rich);
         assert!(row.title.contains("Hello") && row.title.contains("world"), "{}", row.title);
         assert!(store.preview_text(id, 0, 100).unwrap().contains("world"));
     }
@@ -590,7 +605,7 @@ mod tests {
     #[test]
     fn title_is_single_line_and_bounded() {
         let long = format!("  first\n\tsecond {}", "x".repeat(10_000));
-        let title = make_title(&long, "text");
+        let title = make_title(&long, Kind::Text);
         assert!(title.starts_with("first second"));
         assert_eq!(title.chars().count(), TITLE_MAX_CHARS);
     }
@@ -601,8 +616,8 @@ mod tests {
         store.ingest(text("한글 줄\nsecond line", 1)).unwrap();
         store.ingest(text("  https://example.com/a?b=c \n", 2)).unwrap();
         let rows = store.list(0, 10).unwrap();
-        assert_eq!(rows[0].kind, "link");
-        assert_eq!((rows[1].kind.as_str(), rows[1].char_count, rows[1].line_count), ("text", 16, 2));
+        assert_eq!(rows[0].kind, Kind::Link);
+        assert_eq!((rows[1].kind, rows[1].char_count, rows[1].line_count), (Kind::Text, 16, 2));
     }
 
     #[test]
@@ -618,7 +633,7 @@ mod tests {
         };
         let id = store.ingest(capture).unwrap().id;
         let row = &store.list(0, 1).unwrap()[0];
-        assert_eq!((row.kind.as_str(), row.title.as_str(), row.line_count), ("files", "2 files: a.csv, b.png", 2));
+        assert_eq!((row.kind, row.title.as_str(), row.line_count), (Kind::Files, "2 files: a.csv, b.png", 2));
         assert_eq!(store.search("Pictures", &crate::Filter::default(), 10).unwrap()[0].id, id);
 
         assert_eq!(store.thumbnail(id).unwrap(), None);
@@ -643,21 +658,23 @@ mod tests {
         };
         store.ingest(image).unwrap();
         let rows = store.list(0, 10).unwrap();
-        let kinds: Vec<_> = rows.iter().map(|r| (r.title.as_str(), r.kind.as_str())).collect();
+        let kinds: Vec<_> = rows.iter().map(|r| (r.title.as_str(), r.kind)).collect();
         assert_eq!(
             kinds,
             [
-                ("Image 1920 × 1080", "image"),
-                ("not #fff", "text"),
-                ("#12", "text"),
-                ("rgb(18, 116, 223)", "color"),
-                ("#1274DF", "color"),
+                ("Image 1920 × 1080", Kind::Image),
+                ("not #fff", Kind::Text),
+                ("#12", Kind::Text),
+                ("rgb(18, 116, 223)", Kind::Color),
+                ("#1274DF", Kind::Color),
             ]
         );
         assert_eq!(rows[4].first_copied_at, 0);
 
         let facets = store.facets(10).unwrap();
-        assert_eq!(facets.kinds[0], Facet { name: "text".into(), count: 2 });
+        // Equal counts break by name, so color comes before text every time.
+        let kinds: Vec<_> = facets.kinds.iter().map(|f| (f.kind, f.count)).collect();
+        assert_eq!(kinds, [(Kind::Color, 2), (Kind::Text, 2), (Kind::Image, 1)]);
         assert_eq!(
             facets.apps,
             [
@@ -729,6 +746,20 @@ mod tests {
     }
 
     #[test]
+    fn set_pinned_keeps_the_first_pinned_first() {
+        let mut store = Store::open_in_memory().unwrap();
+        let ids: Vec<i64> = (0..3).map(|i| store.ingest(text(&format!("item {i}"), i)).unwrap().id).collect();
+        // Pinned 900 ms apart and then 99 s apart: string order must still follow time.
+        store.set_pinned(ids[0], true, 99_000).unwrap();
+        store.set_pinned(ids[2], true, 900).unwrap();
+        let first: Vec<i64> = store.list(0, 2).unwrap().into_iter().map(|r| r.id).collect();
+        assert_eq!(first, [ids[2], ids[0]]);
+        store.set_pinned(ids[2], false, 0).unwrap();
+        assert_eq!(store.list(0, 1).unwrap()[0].id, ids[0]);
+        assert!(matches!(store.set_pinned(99, true, 1), Err(Error::NotFound(99))));
+    }
+
+    #[test]
     fn pinned_items_lead_every_page_in_pin_order() {
         let mut store = Store::open_in_memory().unwrap();
         let ids: Vec<i64> = (0..6).map(|i| store.ingest(text(&format!("item {i}"), i)).unwrap().id).collect();
@@ -771,7 +802,7 @@ mod tests {
             store.search(q, &Filter::default(), 10).unwrap().into_iter().map(|h| h.id).collect()
         };
         assert_eq!(ids(&mut store, "휴지통").len(), 2);
-        let images = Filter { kinds: vec!["image".into()], apps: vec![] };
+        let images = Filter { kinds: vec![Kind::Image], apps: vec![] };
         assert_eq!(store.search("휴지통", &images, 10).unwrap()[0].id, a);
         // Two-syllable words are too short for the index but still find the image, newest first.
         assert_eq!(ids(&mut store, "항목"), [a]);
