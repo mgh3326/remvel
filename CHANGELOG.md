@@ -25,6 +25,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 - Shortcuts, Spotlight and Siri actions: Search Clipboard History, Get Recent Clipboard Items, Get Text of Clipboard Item, Copy Clipboard Item, Open Remvel.
 - ⌘A, ⌘C, ⌘X, ⌘V and ⌘Z work in the search field. ⌘C with nothing selected there copies the selected item.
 - The popup and Shortcuts show search results in the same order.
+- Kinds and apps with the same number of items keep one order in the sidebar and filter menu.
 - Filtered lists (a kind, an app, or a `#tag` with no search text) show pinned items first, like the full history. Search results rank by match and ignore pins; pinned items keep their badge.
 - Items copied or pasted at the same moment keep one order in the list, filters, search, and after relaunch.
 
