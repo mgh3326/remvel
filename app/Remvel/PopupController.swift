@@ -737,6 +737,8 @@ final class PopupController: NSObject {
     // MARK: Table updates
 
     private func reloadTable() {
+        preview.searchWords = HistoryModel.parse(model.query, apps: model.knownApps).text
+            .split(separator: " ").map(String.init).filter { $0.count >= 2 }
         table.reloadData()
         updateChips()
         listHeader.stringValue = model.isFiltered ? "Results" : "History"

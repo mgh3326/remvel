@@ -24,6 +24,10 @@ final class PreviewController: NSObject {
     private let ocrScroll = NSTextView.scrollableTextView()
     private var ocrView: NSTextView { ocrScroll.documentView as! NSTextView }
     private let ocrLine = NSBox()
+    /// Words of the search, marked where they occur in an image's text.
+    var searchWords: [String] = [] {
+        didSet { if searchWords != oldValue { markSearchWords() } }
+    }
     private var captionAtBottom: NSLayoutConstraint!
     private var captionAboveText: NSLayoutConstraint!
     /// Quick Look for copied files: documents, PDFs, videos, folders.
@@ -389,10 +393,30 @@ final class PreviewController: NSObject {
         }
     }
 
+    /// Marks every occurrence, ignoring case, and scrolls the first into view.
+    private func markSearchWords() {
+        guard let storage = ocrView.textStorage else { return }
+        let whole = NSRange(location: 0, length: storage.length)
+        storage.removeAttribute(.backgroundColor, range: whole)
+        let text = storage.string as NSString
+        var first: NSRange?
+        for word in searchWords {
+            var range = text.range(of: word, options: .caseInsensitive, range: whole)
+            while range.location != NSNotFound {
+                storage.addAttribute(.backgroundColor, value: NSColor.findHighlightColor.withAlphaComponent(0.6), range: range)
+                if first.map({ range.location < $0.location }) ?? true { first = range }
+                let next = range.upperBound
+                range = text.range(of: word, options: .caseInsensitive, range: NSRange(location: next, length: whole.length - next))
+            }
+        }
+        if let first { ocrView.scrollRangeToVisible(first) }
+    }
+
     /// The image keeps the top of the card; its text takes the bottom 40% and scrolls.
     private func showRecognizedText(_ text: String?) {
         ocrView.string = text ?? ""
         ocrView.scroll(.zero)
+        markSearchWords()
         ocrLine.isHidden = text == nil
         ocrScroll.isHidden = text == nil
         captionAtBottom.isActive = text == nil
