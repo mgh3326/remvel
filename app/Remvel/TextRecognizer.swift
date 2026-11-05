@@ -13,7 +13,7 @@ final class TextRecognizer {
     static let maxPixels = 2000
     /// The very first run on a Mac also prepares the system's models, which can take half a minute.
     static let timeout: TimeInterval = 120
-    static let backfillBatch: UInt32 = 20
+    static let backfillBatch: Int64 = 20
     /// Pause between history images so a backfill never keeps a core busy.
     static let backfillPause: TimeInterval = 1
 
@@ -69,7 +69,7 @@ final class TextRecognizer {
             }
         }
         // A failed run stores "" too, so one broken image is not retried forever.
-        Core.shared.run({ try $0.setRecognizedText(id: id, text: text) }) { _ in done() }
+        Core.shared.perform("storing recognized text", { try $0.setRecognizedText(id: id, text: text) }, then: done)
     }
 
     /// Image bytes in through stdin, text out through stdout, so nothing private touches the disk.

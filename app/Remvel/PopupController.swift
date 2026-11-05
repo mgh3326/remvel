@@ -94,7 +94,7 @@ final class PopupController: NSObject {
     /// Apps listed in the filter menu; the sidebar scrolls through all of them.
     static let maxFacetApps = 12
     /// Apps that `@name` in the search field and the sidebar can pick from.
-    static let maxKnownApps: UInt32 = 500
+    static let maxKnownApps: Int64 = 500
 
     /// Screen frame of the menu bar icon, for `PopupPosition.statusItem`.
     var statusItemFrame: (() -> NSRect?)?
@@ -346,23 +346,23 @@ final class PopupController: NSObject {
     /// Pinned items stay at the top of the history and are never trimmed.
     private func togglePin(row: Int) {
         guard let item = model.summary(at: row) else { return }
-        // The pin value orders pins: first pinned stays first.
-        let pin = item.pin == nil ? String(format: "%013lld", Int64(Date().timeIntervalSince1970 * 1000)) : nil
-        Core.shared.run({ try $0.setPin(id: item.id, pin: pin) }) { [weak self] _ in
+        // The core orders pins by when they were pinned: first pinned stays first.
+        let now = Date().unixMillis
+        Core.shared.perform("pin", { try $0.setPinned(id: item.id, pinned: item.pin == nil, at: now) }, then: { [weak self] in
             self?.reselect = (item.id, row)
             self?.model.refresh()
-        }
+        })
     }
 
     private func delete(row: Int) {
         guard let item = model.summary(at: row) else { return }
         queue.removeAll { $0 == item.id }
         let remove = {
-            Core.shared.run({ try $0.delete(id: item.id) }) { [weak self] _ in
+            Core.shared.perform("delete", { try $0.delete(id: item.id) }, then: { [weak self] in
                 self?.reselect = (nil, row)
                 self?.model.refresh()
                 self?.loadFacets()
-            }
+            })
         }
         // Fade the row out first, so it is clear which one went.
         guard let rowView = table.rowView(atRow: row, makeIfNecessary: false) else { return remove() }
@@ -389,8 +389,8 @@ final class PopupController: NSObject {
         let action = { (title: String, hint: String, run: @escaping () -> Void) in ItemAction(title: title, hint: hint, run: run) }
         var sections = [
             ActionSection(title: nil, actions: [
-                action(item.kind == "files" ? "Paste Files" : "Paste", "⏎") { [weak self] in self?.paste(rows: [row], mode: .original) },
-                action(item.kind == "image" ? "Paste Text in Image" : item.kind == "files" ? "Paste Paths" : "Paste as Plain Text",
+                action(item.kind == .files ? "Paste Files" : "Paste", "⏎") { [weak self] in self?.paste(rows: [row], mode: .original) },
+                action(item.kind == .image ? "Paste Text in Image" : item.kind == .files ? "Paste Paths" : "Paste as Plain Text",
                        "⇧⏎") { [weak self] in self?.paste(rows: [row], mode: .plainText) },
                 action("Copy", "⌥⏎") { [weak self] in self?.paste(rows: [row], mode: .copyOnly) },
                 action(Self.nextModeTitle[previewMode.next]!, "⌘Y") { [weak self] in
@@ -400,7 +400,7 @@ final class PopupController: NSObject {
                 action("Delete", "⌥⌫") { [weak self] in self?.delete(row: row) },
             ]),
         ]
-        if item.kind == "files" {
+        if item.kind == .files {
             // The preview has loaded the selected item's paths.
             guard row == table.selectedRow, preview.filePaths.count > 1 else { return sections }
             sections.append(ActionSection(title: "Paste One File", actions: preview.filePaths.map { path in
@@ -652,7 +652,7 @@ final class PopupController: NSObject {
     @objc private func showFilterMenu() {
         let menu = NSMenu()
         menu.addItem(.sectionHeader(title: "Kind"))
-        let counts = Dictionary(uniqueKeysWithValues: facets.kinds.map { ($0.name, $0.count) })
+        let counts = Dictionary(uniqueKeysWithValues: facets.kinds.map { ($0.kind, $0.count) })
         for info in Kinds.all where counts[info.kind] != nil {
             let item = menu.addItem(withTitle: "\(info.name)  \(counts[info.kind]!.formatted())",
                                     action: #selector(toggleKind(_:)), keyEquivalent: "")
@@ -687,7 +687,7 @@ final class PopupController: NSObject {
     }
 
     @objc private func toggleKind(_ item: NSMenuItem) {
-        guard let kind = item.representedObject as? String else { return }
+        guard let kind = item.representedObject as? Kind else { return }
         var filter = model.filter
         filter.kinds = filter.kinds.contains(kind) ? filter.kinds.filter { $0 != kind } : filter.kinds + [kind]
         setFilter(filter)
@@ -705,9 +705,14 @@ final class PopupController: NSObject {
     }
 
     @objc private func removeChip(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
         var filter = model.filter
-        filter.kinds.removeAll { $0 == sender.identifier?.rawValue }
-        filter.apps.removeAll { $0 == sender.identifier?.rawValue }
+        // Kind chips are named "#tag"; app chips by bundle id, which never starts with "#".
+        if id.hasPrefix("#"), let kind = Kinds.tags[String(id.dropFirst())] {
+            filter.kinds.removeAll { $0 == kind }
+        } else {
+            filter.apps.removeAll { $0 == id }
+        }
         setFilter(filter)
     }
 
@@ -719,7 +724,7 @@ final class PopupController: NSObject {
     /// One removable chip per active kind or app filter, next to the search field.
     private func updateChips() {
         chips.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let entries = model.filter.kinds.map { ($0, Kinds.info($0).name, Kinds.symbol($0)) }
+        let entries = model.filter.kinds.map { ("#" + Kinds.info($0).tag, Kinds.info($0).name, Kinds.symbol($0)) }
             + model.filter.apps.map { ($0, SourceApps.name($0), SourceApps.icon($0).map(Self.menuIcon)) }
         for (id, name, image) in entries {
             let chip = NSButton(title: "\(name)  ✕", target: self, action: #selector(removeChip(_:)))
@@ -790,9 +795,9 @@ final class PopupController: NSObject {
         } else {
             let item = model.summary(at: table.selectedRow)
             switch item?.kind {
-            case "image":
+            case .image?:
                 hints = [("⏎", "Paste image"), ("⇧⏎", "Paste its text"), ("⌥⏎", "Copy")]
-            case "files":
+            case .files?:
                 hints = [("⏎", "Paste files"), ("⇧⏎", "Paste paths"), ("⌥⏎", "Copy")]
             default:
                 hints = [("⏎", "Paste"), ("⇧⏎", "Plain text"), ("⌥⏎", "Copy")]
@@ -828,7 +833,7 @@ final class PopupController: NSObject {
     // MARK: Row content
 
     private func icon(for item: ItemSummary) -> NSImage? {
-        if item.kind == "color", let color = Kinds.color(from: item.title) {
+        if item.kind == .color, let color = Kinds.color(from: item.title) {
             return Kinds.swatch(color, size: 16)
         }
         if let app = item.app, let icon = SourceApps.icon(app) {
@@ -845,7 +850,7 @@ final class PopupController: NSObject {
     private func title(for item: ItemSummary, row: Int) -> NSAttributedString {
         let title = NSMutableAttributedString(string: item.title, attributes: [.font: NSFont.systemFont(ofSize: 13)])
         let indices = Set(model.titleIndices(at: row).map(Int.init))
-        let finish = item.kind == "link" ? Self.trimmingScheme : { $0 }
+        let finish = item.kind == .link ? Self.trimmingScheme : { $0 }
         guard !indices.isEmpty else { return finish(title) }
         // nucleo reports grapheme indices, which are Swift Character offsets.
         var utf16Offset = 0
@@ -978,7 +983,7 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
             return cell
         }
         cell.imageView?.image = icon(for: item)
-        cell.truncatesMiddle = item.kind == "link"
+        cell.truncatesMiddle = item.kind == .link
         cell.title = title(for: item, row: row)
         cell.badgeText = queue.firstIndex(of: item.id).map { "\($0 + 1)" } ?? ""
         cell.pinned = item.pin != nil
@@ -1064,14 +1069,14 @@ private final class SidebarController: NSObject, NSTableViewDataSource, NSTableV
     enum Row {
         case header(String)
         case all(Int64)
-        case kind(Facet)
+        case kind(KindFacet)
         case app(Facet)
 
         var filter: Filter? {
             switch self {
             case .header: nil
             case .all: Filter(kinds: [], apps: [])
-            case .kind(let facet): Filter(kinds: [facet.name], apps: [])
+            case .kind(let facet): Filter(kinds: [facet.kind], apps: [])
             case .app(let facet): Filter(kinds: [], apps: [facet.name])
             }
         }
@@ -1147,8 +1152,8 @@ private final class SidebarController: NSObject, NSTableViewDataSource, NSTableV
             image.image = NSImage(systemSymbolName: "tray.full", accessibilityDescription: nil)
             count.stringValue = total.formatted()
         case .kind(let facet):
-            text.stringValue = Kinds.info(facet.name).name
-            image.image = Kinds.symbol(facet.name)
+            text.stringValue = Kinds.info(facet.kind).name
+            image.image = Kinds.symbol(facet.kind)
             count.stringValue = facet.count.formatted()
         case .app(let facet):
             text.stringValue = SourceApps.name(facet.name)

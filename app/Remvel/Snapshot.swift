@@ -61,14 +61,14 @@ struct Snapshot {
             ("rgb(41, 155, 141)", "com.figma.Desktop"),
             ("Release checklist — Remvel 0.3\n\n검색과 저장은 백그라운드에서 처리합니다.\nThe main thread only draws the interface.\n\n• Keep the list at 30 pt per row.\n• Read only the visible page of metadata.\n• Load large text previews in small chunks.", "com.apple.Notes"),
         ]
-        var at = Int64(Date().timeIntervalSince1970 * 1000) - 3_600_000
+        var at = Date().unixMillis - 3_600_000
         for (body, app) in samples {
             at += 60_000
             let id = try store.ingest(capture: Capture(
                 reps: [Rep(uti: text, data: Data(body.utf8))], app: app, derivedText: nil,
                 thumbnailPng: nil, title: nil, copiedAt: at
             )).id
-            if body.hasPrefix("cargo") { try store.setPin(id: id, pin: "0000000000001") }
+            if body.hasPrefix("cargo") { try store.setPinned(id: id, pinned: true, at: 1) }
         }
         for (index, name) in ["river-valley", "review-panel-dark", "archive-levels"].enumerated() {
             let image = NSApp.applicationIconImage!

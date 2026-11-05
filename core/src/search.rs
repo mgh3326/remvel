@@ -16,7 +16,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32String};
 use rusqlite::params;
 
-use crate::{Result, Store};
+use crate::{Kind, Result, Store};
 
 /// FTS5 trigram needs at least 3 characters to use the index.
 const TRIGRAM_MIN_CHARS: usize = 3;
@@ -44,7 +44,7 @@ pub struct SearchHit {
 /// Narrows any search or listing. Empty lists mean "any".
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
 pub struct Filter {
-    pub kinds: Vec<String>,
+    pub kinds: Vec<Kind>,
     /// Bundle ids of the apps items were copied from.
     pub apps: Vec<String>,
 }
@@ -55,7 +55,7 @@ impl Filter {
     }
 
     fn allows(&self, e: &Entry) -> bool {
-        (self.kinds.is_empty() || self.kinds.iter().any(|k| **k == *e.kind))
+        (self.kinds.is_empty() || self.kinds.contains(&e.kind))
             && (self.apps.is_empty() || e.app.as_deref().is_some_and(|a| self.apps.iter().any(|x| x == a)))
     }
 }
@@ -64,18 +64,18 @@ impl Filter {
 pub(crate) struct Entry {
     id: i64,
     title: Utf32String,
-    kind: Box<str>,
+    kind: Kind,
     app: Option<Box<str>>,
     last_copied_at: i64,
     pin: Option<Box<str>>,
 }
 
 impl Entry {
-    pub fn new(id: i64, title: String, kind: &str, app: Option<&str>, last_copied_at: i64, pin: Option<&str>) -> Self {
+    pub fn new(id: i64, title: String, kind: Kind, app: Option<&str>, last_copied_at: i64, pin: Option<&str>) -> Self {
         Entry {
             id,
             title: Utf32String::from(title),
-            kind: kind.into(),
+            kind,
             app: app.map(Into::into),
             last_copied_at,
             pin: pin.map(Into::into),
@@ -187,8 +187,8 @@ impl TitleIndex {
 }
 
 /// A JSON array literal, so SQL can take a variable-length list as one bound parameter.
-fn json_list(items: &[String]) -> String {
-    let quoted: Vec<String> = items.iter().map(|k| format!("\"{}\"", k.replace(['"', '\\'], ""))).collect();
+fn json_list<S: AsRef<str>>(items: &[S]) -> String {
+    let quoted: Vec<String> = items.iter().map(|k| format!("\"{}\"", k.as_ref().replace(['"', '\\'], ""))).collect();
     format!("[{}]", quoted.join(","))
 }
 
@@ -242,10 +242,15 @@ impl Store {
                AND (json_array_length(?4) = 0 OR items.app IN (SELECT value FROM json_each(?4)))
              ORDER BY items.last_copied_at DESC, items.id DESC LIMIT ?2",
         )?;
-        let rows = stmt
-            .query_map(params![phrase, limit as i64, json_list(&filter.kinds), json_list(&filter.apps)], |r| {
-                r.get(0)
-            })?;
+        let rows = stmt.query_map(
+            params![
+                phrase,
+                limit as i64,
+                json_list(&filter.kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>()),
+                json_list(&filter.apps)
+            ],
+            |r| r.get(0),
+        )?;
         rows.map(|id| Ok(SearchHit { id: id?, score: 0, title_indices: Vec::new() })).collect()
     }
 }
@@ -319,10 +324,7 @@ mod tests {
         assert_eq!(ids(store.search("deploy", &Filter::default(), 10).unwrap()), [2, 1]);
         // Browsing, filtered or not: the pin leads, as in `list`.
         assert_eq!(ids(store.search("", &Filter::default(), 10).unwrap()), [1, 3, 2]);
-        assert_eq!(
-            ids(store.search("  ", &Filter { kinds: vec!["text".into()], apps: vec![] }, 10).unwrap()),
-            [1, 3, 2]
-        );
+        assert_eq!(ids(store.search("  ", &Filter { kinds: vec![Kind::Text], apps: vec![] }, 10).unwrap()), [1, 3, 2]);
         assert_eq!(list_ids(&store), [1, 3, 2]);
     }
 
@@ -375,7 +377,7 @@ mod tests {
     #[test]
     fn kind_filter_applies_to_every_path() {
         let store = store_with(&["https://example.com/docs", "docs folder notes", "another link https://x.y"]);
-        let links = Filter { kinds: vec!["link".into()], apps: vec![] };
+        let links = Filter { kinds: vec![Kind::Link], apps: vec![] };
         let count = |hits: Result<Vec<SearchHit>>| hits.unwrap().len();
         assert_eq!(count(store.search("", &links, 10)), 1);
         assert_eq!(count(store.search("docs", &links, 10)), 1);

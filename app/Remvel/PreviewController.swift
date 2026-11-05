@@ -210,24 +210,24 @@ final class PreviewController: NSObject {
         meta.toolTip = newItem.map(Self.fullDates)
         kindLabel.stringValue = newItem.map { Kinds.info($0.kind).name } ?? ""
 
-        let kind = newItem?.kind ?? "text"
-        let visual = kind == "image" || kind == "color"
+        let kind = newItem?.kind ?? .text
+        let visual = kind == .image || kind == .color
         // Hidden (list-only popup): no page is fetched until the preview is shown and asks again.
-        let link = kind == "link" && Settings.shared.linkPreviews && !view.isHidden
-        textScroll.isHidden = visual || link || kind == "files"
+        let link = kind == .link && Settings.shared.linkPreviews && !view.isHidden
+        textScroll.isHidden = visual || link || kind == .files
         imageView.isHidden = !visual
         caption.isHidden = !visual && !link
-        fileView.isHidden = kind != "files" || (newItem?.lineCount ?? 0) > 1
-        fileGrid.isHidden = kind != "files" || (newItem?.lineCount ?? 0) <= 1
+        fileView.isHidden = kind != .files || (newItem?.lineCount ?? 0) > 1
+        fileGrid.isHidden = kind != .files || (newItem?.lineCount ?? 0) <= 1
         linkView.isHidden = !link
         urlLabel.isHidden = true
 
         guard let newItem else { return }
         switch kind {
-        case "image": loadImage(newItem.id)
-        case "files": loadFiles(newItem.id)
-        case "color": showColor(newItem.title)
-        case "link" where link: loadLink(newItem.id)
+        case .image: loadImage(newItem.id)
+        case .files: loadFiles(newItem.id)
+        case .color: showColor(newItem.title)
+        case .link where link: loadLink(newItem.id)
         default: loadNextChunk()
         }
     }
@@ -434,9 +434,9 @@ final class PreviewController: NSObject {
             parts.append("Last \(shortDate.string(from: date(item.lastCopiedAt)))")
         }
         switch item.kind {
-        case "files":
+        case .files:
             parts.append(item.lineCount == 1 ? "1 file" : "\(item.lineCount) files")
-        case "image", "color":
+        case .image, .color:
             break
         default:
             if item.charCount > 0 {
@@ -456,6 +456,6 @@ final class PreviewController: NSObject {
     }
 
     private static func date(_ millis: Int64) -> Date {
-        Date(timeIntervalSince1970: TimeInterval(millis) / 1000)
+        Date(unixMillis: millis)
     }
 }

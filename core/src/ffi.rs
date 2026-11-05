@@ -1,10 +1,24 @@
 //! The surface Swift sees. One `Remvel` per database; calls are serialized by a mutex,
 //! so the Swift side should call from a background queue, never the main thread.
+//!
+//! Every integer here is `i64` (Swift `Int64`): ids, Unix-millisecond times, byte offsets,
+//! counts and limits. Negative counts and limits read as 0. Only fuzzy scores and title
+//! indices, which come from nucleo, are `u32`.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::{Capture, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store};
+use crate::{Capture, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, UTI_FILE_PATHS};
+
+/// The pasteboard type of Remvel's own rep for file copies: every copied path, one per line.
+#[uniffi::export]
+pub fn file_paths_uti() -> String {
+    UTI_FILE_PATHS.to_owned()
+}
+
+fn usize_from(n: i64) -> usize {
+    n.max(0) as usize
+}
 
 #[derive(uniffi::Object)]
 pub struct Remvel {
@@ -34,8 +48,8 @@ impl Remvel {
         self.store().ingest(capture)
     }
 
-    pub fn count(&self) -> u64 {
-        self.store().len() as u64
+    pub fn count(&self) -> i64 {
+        self.store().len() as i64
     }
 
     pub fn list(&self, offset: i64, limit: i64) -> Result<Vec<ItemSummary>> {
@@ -48,12 +62,12 @@ impl Remvel {
 
     /// What a history view shows, for the popup and Shortcuts alike. A blank query browses
     /// (pinned first, then newest); search text ranks by relevance and ignores pins.
-    pub fn search(&self, query: String, filter: Filter, limit: u32) -> Result<Vec<SearchHit>> {
-        self.store().search(&query, &filter, limit as usize)
+    pub fn search(&self, query: String, filter: Filter, limit: i64) -> Result<Vec<SearchHit>> {
+        self.store().search(&query, &filter, usize_from(limit))
     }
 
-    pub fn facets(&self, max_apps: u32) -> Result<Facets> {
-        self.store().facets(max_apps as i64)
+    pub fn facets(&self, max_apps: i64) -> Result<Facets> {
+        self.store().facets(max_apps.max(0))
     }
 
     pub fn touch(&self, id: i64, at: i64) -> Result<()> {
@@ -76,8 +90,9 @@ impl Remvel {
         self.store().reps(id)
     }
 
-    pub fn set_pin(&self, id: i64, pin: Option<String>) -> Result<()> {
-        self.store().set_pin(id, pin.as_deref())
+    /// Pinning at `at` (Unix ms) puts the item after every earlier pin.
+    pub fn set_pinned(&self, id: i64, pinned: bool, at: i64) -> Result<()> {
+        self.store().set_pinned(id, pinned, at)
     }
 
     pub fn set_recognized_text(&self, id: i64, text: String) -> Result<()> {
@@ -93,15 +108,16 @@ impl Remvel {
         self.store().recognized_text(id)
     }
 
-    pub fn unrecognized_images(&self, limit: u32) -> Result<Vec<i64>> {
-        self.store().unrecognized_images(limit as i64)
+    pub fn unrecognized_images(&self, limit: i64) -> Result<Vec<i64>> {
+        self.store().unrecognized_images(limit.max(0))
     }
 
     pub fn delete(&self, id: i64) -> Result<()> {
         self.store().delete(id)
     }
 
-    pub fn trim(&self, max_items: i64) -> Result<u64> {
-        Ok(self.store().trim(max_items)? as u64)
+    /// Returns how many items were removed.
+    pub fn trim(&self, max_items: i64) -> Result<i64> {
+        Ok(self.store().trim(max_items.max(0))? as i64)
     }
 }

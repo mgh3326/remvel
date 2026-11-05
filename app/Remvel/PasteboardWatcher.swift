@@ -10,8 +10,8 @@ final class PasteboardWatcher {
 
     /// nspasteboard.org: the bundle id of the app that wrote the pasteboard.
     static let sourceType = NSPasteboard.PasteboardType("org.nspasteboard.source")
-    /// Matches UTI_FILE_PATHS in the core: every copied path, one per line.
-    static let filePathsUTI = "io.github.remvel.file-paths"
+    /// Remvel's own rep for file copies, defined by the core: every copied path, one per line.
+    static let filePathsUTI = filePathsUti()
 
     var onIngest: (() -> Void)?
 
@@ -85,11 +85,11 @@ final class PasteboardWatcher {
         }
         guard !reps.isEmpty, !Self.isBlankText(reps) else { return }
 
-        let copiedAt = Int64(Date().timeIntervalSince1970 * 1000)
+        let copiedAt = Date().unixMillis
         let limit = Int64(settings.historyLimit)
         Core.shared.run({ store in
             let result = try store.ingest(capture: Preprocessor.capture(reps: reps, app: app, copiedAt: copiedAt))
-            if limit > 0, store.count() > UInt64(limit) {
+            if limit > 0, store.count() > limit {
                 _ = try store.trim(maxItems: limit)
             }
             return result
@@ -112,7 +112,7 @@ final class PasteboardWatcher {
     private func addThumbnail(id: Int64, file: URL) {
         Preprocessor.fileThumbnailPNG(file) { [weak self] png in
             guard let png else { return }
-            Core.shared.run({ try $0.setThumbnail(id: id, png: png) }) { _ in self?.onIngest?() }
+            Core.shared.perform("thumbnail", { try $0.setThumbnail(id: id, png: png) }, then: { self?.onIngest?() })
         }
     }
 

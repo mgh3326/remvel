@@ -24,7 +24,7 @@ struct ClipboardItem: AppEntity {
         title = summary.title
         kind = Kinds.info(summary.kind).name
         app = summary.app.map(SourceApps.name) ?? ""
-        lastCopied = Date(timeIntervalSince1970: TimeInterval(summary.lastCopiedAt) / 1000)
+        lastCopied = Date(unixMillis: summary.lastCopiedAt)
     }
 
     var displayRepresentation: DisplayRepresentation {
@@ -178,7 +178,7 @@ private func search(_ query: String, limit: Int) async throws -> [ClipboardItem]
     let (text, kinds, _) = HistoryModel.parse(query)
     let filter = Filter(kinds: kinds, apps: [])
     let summaries = try await core { store -> [ItemSummary] in
-        let hits = try store.search(query: text, filter: filter, limit: UInt32(limit))
+        let hits = try store.search(query: text, filter: filter, limit: Int64(limit))
         return try store.summaries(ids: hits.map(\.id))
     }
     return summaries.map(ClipboardItem.init)
