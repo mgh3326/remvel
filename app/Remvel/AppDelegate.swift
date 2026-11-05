@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openItem?.title = ok ? "Open Remvel  \(combo.label)" : "Open Remvel  (\(combo.label) is taken)"
             if !ok { Self.warnShortcutTaken(combo) }
         }.store(in: &subscriptions)
+        settings.$windowShortcuts.sink { WindowMover.shared.setEnabled($0) }.store(in: &subscriptions)
         settings.$showInDock.sink { show in
             NSApp.setActivationPolicy(show ? .regular : .accessory)
         }.store(in: &subscriptions)

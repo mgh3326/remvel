@@ -123,6 +123,8 @@ final class Settings: ObservableObject {
     @Published var linkPreviews: Bool { didSet { defaults.set(linkPreviews, forKey: "linkPreviews") } }
     /// Read text in copied images on this Mac so searches find it.
     @Published var recognizeText: Bool { didSet { defaults.set(recognizeText, forKey: "recognizeText") } }
+    /// Shortcuts that send the focused window to another desktop or display.
+    @Published var windowShortcuts: Bool { didSet { defaults.set(windowShortcuts, forKey: "windowShortcuts") } }
     @Published var hotkey: KeyCombo {
         didSet { defaults.set(try? JSONEncoder().encode(hotkey), forKey: "hotkey") }
     }
@@ -143,6 +145,7 @@ final class Settings: ObservableObject {
         hideFromScreenSharing = defaults.bool(forKey: "hideFromScreenSharing")
         linkPreviews = defaults.object(forKey: "linkPreviews") as? Bool ?? true
         recognizeText = defaults.object(forKey: "recognizeText") as? Bool ?? true
+        windowShortcuts = defaults.bool(forKey: "windowShortcuts")
         hotkey = defaults.data(forKey: "hotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .default
     }

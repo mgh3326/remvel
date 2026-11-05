@@ -64,6 +64,18 @@ Search also finds words inside copied images: Remvel reads them on your Mac with
 
 The Shortcuts app lists Remvel's actions (search, recent items, get text, copy, open), which Spotlight and Siri can run too.
 
+### Send windows to other desktops and displays
+
+Settings → Windows turns on shortcuts for what macOS tiling (Window → Move & Resize) does not do:
+
+| Key | Action |
+|---|---|
+| ⌃⌥⇧← / → | Send the focused window to the previous or next desktop |
+| ⌃⌥⇧1–9 | Send it to that desktop |
+| ⌃⌥⌘← / → | Send it to the display on the left or right, keeping its place: a left half stays a left half |
+
+Moving between desktops uses a private macOS interface (the one Loop uses), so a future macOS may break it; Remvel beeps when a window did not move. Desktops of full-screen apps can't take other windows.
+
 ### Copy from an ssh session
 
 `scripts/rcopy` copies from a remote shell to the clipboard of the Mac you are on, so it lands in Remvel too. It uses the OSC 52 terminal sequence, which Ghostty, cmux, iTerm2, kitty and WezTerm support (Terminal.app does not). Put it on the remote host:

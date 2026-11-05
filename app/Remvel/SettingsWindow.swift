@@ -27,6 +27,7 @@ final class SettingsWindow {
 
 private struct SettingsView: View {
     @ObservedObject private var settings = Settings.shared
+    @ObservedObject private var windows = WindowMover.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var selectedApp: String?
 
@@ -62,6 +63,18 @@ private struct SettingsView: View {
                             launchAtLogin = SMAppService.mainApp.status == .enabled
                         }
                     }
+            }
+            Section {
+                Toggle("Send windows to other desktops and displays", isOn: $settings.windowShortcuts)
+                if !windows.taken.isEmpty {
+                    Text("Used by another app: \(windows.taken.map(\.label).joined(separator: " "))")
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Windows")
+            } footer: {
+                Text("⌃⌥⇧← → sends the focused window to the previous or next desktop, ⌃⌥⇧1–9 to that desktop, ⌃⌥⌘← → to the previous or next display, keeping its place on the screen. macOS tiles windows itself: Window → Move & Resize.")
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Include nightly builds", isOn: $settings.nightlyUpdates)

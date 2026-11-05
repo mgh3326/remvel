@@ -4,6 +4,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 
 ## 0.4.0
 
+- Settings → Windows: ⌃⌥⇧←/→ and ⌃⌥⇧1–9 send the focused window to another desktop, ⌃⌥⌘←/→ to another display, keeping its place on the screen. Off by default.
 - An image's preview shows the text read from it below the picture, selectable and scrolling. Words of the search are marked in it.
 - A link whose page shows no picture (a sign-in wall, a bot check, a private link) shows its full address large under the card, host in bold.
 - Link rows drop `https://` and `www.` and cut the middle of a long address, so links to one site show where they differ.
