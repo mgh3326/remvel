@@ -843,7 +843,8 @@ final class PopupController: NSObject {
     private func title(for item: ItemSummary, row: Int) -> NSAttributedString {
         let title = NSMutableAttributedString(string: item.title, attributes: [.font: NSFont.systemFont(ofSize: 13)])
         let indices = Set(model.titleIndices(at: row).map(Int.init))
-        guard !indices.isEmpty else { return title }
+        let finish = item.kind == "link" ? Self.trimmingScheme : { $0 }
+        guard !indices.isEmpty else { return finish(title) }
         // nucleo reports grapheme indices, which are Swift Character offsets.
         var utf16Offset = 0
         for (index, character) in item.title.enumerated() {
@@ -855,6 +856,14 @@ final class PopupController: NSObject {
                 ], range: NSRange(location: utf16Offset, length: length))
             }
             utf16Offset += length
+        }
+        return finish(title)
+    }
+
+    /// A link row drops `https://` and `www.`, which every link shares, so the host leads.
+    private static func trimmingScheme(_ title: NSMutableAttributedString) -> NSMutableAttributedString {
+        for prefix in ["https://", "http://", "www."] where title.string.hasPrefix(prefix) {
+            title.deleteCharacters(in: NSRange(location: 0, length: prefix.utf16.count))
         }
         return title
     }
@@ -870,6 +879,8 @@ private final class HistoryCell: NSTableCellView {
     var badgeText = "" { didSet { render() } }
     /// Shown in the badge slot when the row has no queue number.
     var pinned = false { didSet { render() } }
+    /// Links of one site differ at the end, so their rows cut the middle, as Maccy does.
+    var truncatesMiddle = false { didSet { render() } }
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { render() }
@@ -879,7 +890,7 @@ private final class HistoryCell: NSTableCellView {
         let selected = backgroundStyle == .emphasized
         let text = NSMutableAttributedString(attributedString: title)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.lineBreakMode = truncatesMiddle ? .byTruncatingMiddle : .byTruncatingTail
         text.addAttributes([
             .foregroundColor: selected ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor,
             .paragraphStyle: paragraph,
@@ -958,12 +969,14 @@ extension PopupController: NSTableViewDataSource, NSTableViewDelegate {
         cell.shortcut.stringValue = shortcut(row: row)
         guard let item = model.summary(at: row) else {
             cell.imageView?.image = nil
+            cell.truncatesMiddle = false
             cell.title = NSAttributedString()
             cell.badgeText = ""
             cell.pinned = false
             return cell
         }
         cell.imageView?.image = icon(for: item)
+        cell.truncatesMiddle = item.kind == "link"
         cell.title = title(for: item, row: row)
         cell.badgeText = queue.firstIndex(of: item.id).map { "\($0 + 1)" } ?? ""
         cell.pinned = item.pin != nil

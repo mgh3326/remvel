@@ -51,6 +51,8 @@ struct Snapshot {
         let text = NSPasteboard.PasteboardType.string.rawValue
         let samples: [(String, String)] = [
             ("let pageSize = 100", "com.apple.dt.Xcode"),
+            ("https://www.example.com/admin/galaxy/metadata_requests/59302?tab=history", "com.apple.Safari"),
+            ("https://www.example.com/admin/galaxy/metadata_requests/59417?tab=history", "com.apple.Safari"),
             ("https://github.com/mgh3326/remvel", "com.apple.Safari"),
             ("#1274DF", "com.figma.Desktop"),
             ("cargo test --release", "com.apple.Terminal"),
