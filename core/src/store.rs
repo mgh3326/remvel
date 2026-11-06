@@ -96,7 +96,7 @@ pub fn pin_value(at: i64) -> String {
 }
 
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
     titles: TitleIndex,
 }
 

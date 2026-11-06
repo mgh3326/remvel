@@ -84,6 +84,16 @@ private struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Toggle("Remember tabs, so closed ones can be found again", isOn: $settings.rememberTabs)
+                Toggle("Keep the text of the page you were reading", isOn: $settings.tabPageText)
+                    .disabled(!settings.rememberTabs)
+            } header: {
+                Text("Browser tabs")
+            } footer: {
+                Text("A browser's tabs are read when you switch away from it, at most every two minutes, and stored only on this Mac. Closed tabs show below the open ones in the tab list; ⏎ opens one again. Safari gives page text as is; Chromium browsers (Edge, Chrome, Whale…) give it once View › Developer › Allow JavaScript from Apple Events is on.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Toggle("Include nightly builds", isOn: $settings.nightlyUpdates)
             } header: {
                 Text("Updates")

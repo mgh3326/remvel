@@ -8,7 +8,10 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::{Capture, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, UTI_FILE_PATHS};
+use crate::{
+    Capture, ClosedTab, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, TabSeen,
+    UTI_FILE_PATHS,
+};
 
 /// The pasteboard type of Remvel's own rep for file copies: every copied path, one per line.
 #[uniffi::export]
@@ -114,6 +117,32 @@ impl Remvel {
 
     pub fn delete(&self, id: i64) -> Result<()> {
         self.store().delete(id)
+    }
+
+    /// Every tab `browser` (a bundle id) has open now; tabs of it missing since the last call are closed at `at`.
+    pub fn record_tabs(&self, browser: String, tabs: Vec<TabSeen>, at: i64) -> Result<()> {
+        self.store().record_tabs(&browser, &tabs, at)
+    }
+
+    pub fn tab_closed(&self, browser: String, url: String, at: i64) -> Result<()> {
+        self.store().tab_closed(&browser, &url, at)
+    }
+
+    pub fn forget_tab(&self, browser: String, url: String) -> Result<()> {
+        self.store().forget_tab(&browser, &url)
+    }
+
+    pub fn set_tab_text(&self, browser: String, url: String, text: String) -> Result<()> {
+        self.store().set_tab_text(&browser, &url, &text)
+    }
+
+    pub fn tab_text(&self, browser: String, url: String) -> Result<Option<String>> {
+        self.store().tab_text(&browser, &url)
+    }
+
+    /// Closed tabs matching every word of `query` in title, address or page text, newest closed first.
+    pub fn closed_tabs(&self, query: String, limit: i64) -> Result<Vec<ClosedTab>> {
+        self.store().closed_tabs(&query, limit)
     }
 
     /// Returns how many items were removed.

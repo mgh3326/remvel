@@ -130,6 +130,10 @@ final class Settings: ObservableObject {
     @Published var hotkey: KeyCombo {
         didSet { defaults.set(try? JSONEncoder().encode(hotkey), forKey: "hotkey") }
     }
+    /// Read browsers' tabs when leaving them, so closed tabs can be found again.
+    @Published var rememberTabs: Bool { didSet { defaults.set(rememberTabs, forKey: "rememberTabs") } }
+    /// Keep the text of the page a browser showed, so closed tabs are found by what they said.
+    @Published var tabPageText: Bool { didSet { defaults.set(tabPageText, forKey: "tabPageText") } }
     /// Opens the switcher over every browser's open tabs.
     @Published var tabsHotkey: KeyCombo {
         didSet { defaults.set(try? JSONEncoder().encode(tabsHotkey), forKey: "tabsHotkey") }
@@ -154,6 +158,8 @@ final class Settings: ObservableObject {
         windowShortcuts = defaults.bool(forKey: "windowShortcuts")
         hotkey = defaults.data(forKey: "hotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .default
+        rememberTabs = defaults.object(forKey: "rememberTabs") as? Bool ?? true
+        tabPageText = defaults.object(forKey: "tabPageText") as? Bool ?? true
         tabsHotkey = defaults.data(forKey: "tabsHotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .tabs
     }

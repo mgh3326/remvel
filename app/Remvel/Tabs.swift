@@ -20,6 +20,19 @@ struct Browser: Hashable {
         }
     }
 
+    /// A browser by bundle id, running or not, for tabs remembered from it.
+    static func named(_ bundleId: String) -> Browser {
+        let safari = bundleId == "com.apple.Safari" || bundleId == "com.apple.SafariTechnologyPreview"
+        let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+            .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") }
+        return Browser(bundleId: bundleId, name: name ?? bundleId, safari: safari)
+    }
+
+    static func isBrowser(_ app: NSRunningApplication) -> Bool {
+        guard let id = app.bundleIdentifier, let url = app.bundleURL else { return false }
+        return id == "com.apple.Safari" || id == "com.apple.SafariTechnologyPreview" || isChromium(url)
+    }
+
     private static var chromium: [URL: Bool] = [:]
 
     private static func isChromium(_ app: URL) -> Bool {
@@ -185,6 +198,27 @@ enum Tabs {
             end run
             """
         return run(script, arguments: ["\(tab.windowId)", "\(tab.tabId)", tab.url], timeout: 5) == "ok"
+    }
+
+    /// The address and text of the page the front window shows. Chromium browsers answer only
+    /// once "Allow JavaScript from Apple Events" is on in their Developer menu; Safari always does.
+    static func pageText(_ browser: Browser) -> (url: String, text: String)? {
+        let script = browser.safari ? """
+            tell application id "\(browser.bundleId)"
+                set t to current tab of front window
+                return (URL of t) & (ASCII character 31) & (text of t)
+            end tell
+            """ : """
+            tell application id "\(browser.bundleId)"
+                set t to active tab of front window
+                set u to URL of t
+                set x to execute t javascript "document.body ? document.body.innerText : ''"
+                return u & (ASCII character 31) & x
+            end tell
+            """
+        guard let output = run(script, timeout: 5), let split = output.firstIndex(of: "\u{1F}") else { return nil }
+        let text = output[output.index(after: split)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty || text == "missing value" ? nil : (String(output[..<split]), text)
     }
 
     // MARK: Scripts

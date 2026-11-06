@@ -62,6 +62,19 @@ const MIGRATIONS: &[&str] = &[
      CREATE INDEX items_recent ON items(last_copied_at DESC, id DESC);",
     // 4: say how many files a multi-file copy holds, as new ones are titled.
     "UPDATE items SET title = line_count || ' files: ' || title WHERE kind = 'files' AND line_count > 1;",
+    // 5: browser tabs seen, open (closed_at NULL) or closed, one row per address per browser (tabs.rs).
+    "CREATE TABLE tabs (
+         id         INTEGER PRIMARY KEY,
+         browser    TEXT    NOT NULL,
+         url        TEXT    NOT NULL,
+         title      TEXT    NOT NULL,
+         first_seen INTEGER NOT NULL,
+         last_seen  INTEGER NOT NULL,
+         closed_at  INTEGER,
+         text       TEXT,
+         UNIQUE (browser, url)
+     );
+     CREATE INDEX tabs_closed ON tabs(closed_at DESC, id DESC) WHERE closed_at IS NOT NULL;",
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {

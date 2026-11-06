@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let ok = self?.tabsHotkey?.register(combo) ?? false
             self?.tabsItem?.title = ok ? "Browser Tabs  \(combo.label)" : "Browser Tabs  (\(combo.label) is taken)"
         }.store(in: &subscriptions)
+        settings.$rememberTabs.sink { TabMemory.shared.setEnabled($0) }.store(in: &subscriptions)
         settings.$windowShortcuts.sink { WindowMover.shared.setEnabled($0) }.store(in: &subscriptions)
         settings.$showInDock.sink { show in
             NSApp.setActivationPolicy(show ? .regular : .accessory)

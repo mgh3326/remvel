@@ -68,11 +68,20 @@ struct Snapshot {
         let tabs = samples.enumerated().map { index, sample in
             BrowserTab(browser: sample.0, windowId: 1, tabId: index + 1, title: sample.1, url: sample.2, active: index == 0)
         }
-        Self.tabSwitcher.prepareSnapshot(tabs, query: "") { view in
-            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try! rep.representation(using: .png, properties: [:])!.write(to: output)
-            NSApp.terminate(nil)
+        // Two tabs closed earlier, remembered in the snapshot's own database.
+        let gone = [TabSeen(url: "https://shopping.naver.com/cart", title: "장바구니"),
+                    TabSeen(url: "https://doc.rust-lang.org/book/", title: "The Rust Programming Language")]
+        let now = Date().unixMillis
+        Core.shared.run({ store in
+            try store.recordTabs(browser: whale.bundleId, tabs: gone, at: now - 3 * 86_400_000)
+            try store.recordTabs(browser: whale.bundleId, tabs: [], at: now - 2 * 3_600_000)
+        }) { _ in
+            Self.tabSwitcher.prepareSnapshot(tabs, query: "") { view in
+                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try! rep.representation(using: .png, properties: [:])!.write(to: output)
+                NSApp.terminate(nil)
+            }
         }
     }
 

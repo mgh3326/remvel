@@ -41,6 +41,8 @@ final class TabSwitcher: NSObject {
 
     private enum Row {
         case tab(BrowserTab)
+        /// Remembered by `TabMemory` and no longer open; ⏎ opens it again.
+        case closed(ClosedTab)
         /// A browser whose tabs need permission first, or that did not answer.
         case browser(Browser, Status)
     }
@@ -78,6 +80,14 @@ final class TabSwitcher: NSObject {
     private var status: [String: Status] = [:]
     private var reading: Set<String> = []
     private var rows: [Row] = []
+    private var closed: [ClosedTab] = []
+    private var closedGeneration = 0
+
+    private static let relative: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
 
     override init() {
         super.init()
@@ -95,6 +105,7 @@ final class TabSwitcher: NSObject {
         }
         if !panel.isVisible { refresh() }
         reload()
+        loadClosed()
         NSApp.activate(ignoringOtherApps: false)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(searchField)
@@ -117,6 +128,7 @@ final class TabSwitcher: NSObject {
         self.tabs = Dictionary(grouping: tabs, by: \.browser.bundleId)
         searchField.stringValue = query
         reload()
+        loadClosed()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { then(self.panel.contentView!) }
     }
 
@@ -143,8 +155,13 @@ final class TabSwitcher: NSObject {
                     guard let self else { return }
                     reading.remove(browser.bundleId)
                     status[browser.bundleId] = result.0
-                    if let read = result.1 { tabs[browser.bundleId] = read }
+                    if let read = result.1 {
+                        tabs[browser.bundleId] = read
+                        TabMemory.shared.record(browser, read)
+                    }
                     reload()
+                    // Tabs closed since the last read are known once every browser has answered.
+                    if reading.isEmpty { loadClosed() }
                 }
             }
         }
@@ -183,9 +200,20 @@ final class TabSwitcher: NSObject {
     }
 
     private func updatePreview() {
-        guard previewShown, table.selectedRow >= 0, table.selectedRow < rows.count,
-              case .tab(let tab) = rows[table.selectedRow] else {
+        guard previewShown, table.selectedRow >= 0, table.selectedRow < rows.count else {
             if previewShown { preview.show(nil, force: true) }
+            return
+        }
+        let tab: BrowserTab
+        switch rows[table.selectedRow] {
+        case .tab(let open): tab = open
+        case .closed(let gone):
+            let closedAt = Date(unixMillis: gone.closedAt)
+            preview.show(page: gone.url, title: gone.title, kind: Browser.named(gone.browser).name,
+                         meta: "Closed \(Self.relative.localizedString(for: closedAt, relativeTo: Date()))")
+            return
+        case .browser:
+            preview.show(nil, force: true)
             return
         }
         let windows = Set((tabs[tab.browser.bundleId] ?? []).map(\.windowId)).count
@@ -194,23 +222,51 @@ final class TabSwitcher: NSObject {
                      meta: "\(count) tabs" + (windows > 1 ? " in \(windows) windows" : "") + (tab.active ? " · showing" : ""))
     }
 
-    /// ⌥⌫: closes the selected tab where it is, without leaving Remvel.
+    /// ⌥⌫: closes the selected tab where it is, without leaving Remvel; it stays findable as closed.
+    /// On a closed tab, forgets it.
     private func closeSelected() {
         let row = table.selectedRow
-        guard row >= 0, row < rows.count, case .tab(let tab) = rows[row] else { return NSSound.beep() }
-        tabs[tab.browser.bundleId]?.removeAll { $0 == tab }
+        guard row >= 0, row < rows.count else { return }
+        switch rows[row] {
+        case .tab(let tab):
+            tabs[tab.browser.bundleId]?.removeAll { $0 == tab }
+            let now = Date().unixMillis
+            queue.async {
+                if Tabs.close(tab) {
+                    Core.shared.perform("tab closed", { try $0.tabClosed(browser: tab.browser.bundleId, url: tab.url, at: now) },
+                                        then: { [weak self] in self?.loadClosed() })
+                } else {
+                    DispatchQueue.main.async { NSSound.beep() }
+                }
+            }
+        case .closed(let gone):
+            closed.removeAll { $0 == gone }
+            Core.shared.perform("forget tab") { try $0.forgetTab(browser: gone.browser, url: gone.url) }
+        case .browser:
+            return NSSound.beep()
+        }
         reload()
         select(row)
-        queue.async {
-            if !Tabs.close(tab) { DispatchQueue.main.async { NSSound.beep() } }
+    }
+
+    /// Closed tabs for the search text, from the core; they follow the open ones.
+    private func loadClosed() {
+        closedGeneration += 1
+        let generation = closedGeneration
+        let text = searchField.stringValue.split(separator: " ").filter { !$0.hasPrefix("@") }.joined(separator: " ")
+        // Browsing shows the latest few; a search looks through all of them.
+        let limit: Int64 = text.isEmpty ? 30 : 300
+        Core.shared.run({ try $0.closedTabs(query: text, limit: limit) }) { [weak self] result in
+            guard let self, generation == closedGeneration, case .success(let found) = result else { return }
+            closed = found
+            reload()
         }
     }
 
     // MARK: Rows
 
     private func reload() {
-        let selectedTab: BrowserTab? = table.selectedRow >= 0 && table.selectedRow < rows.count
-            ? { if case .tab(let tab) = rows[table.selectedRow] { return tab } else { return nil } }() : nil
+        let selectedKey = table.selectedRow >= 0 && table.selectedRow < rows.count ? Self.key(rows[table.selectedRow]) : nil
         let words = searchField.stringValue.lowercased().split(separator: " ").map(String.init)
         let named = words.filter { $0.hasPrefix("@") && $0.count > 1 }.map { String($0.dropFirst()) }
         let text = words.filter { !$0.hasPrefix("@") }
@@ -234,13 +290,30 @@ final class TabSwitcher: NSObject {
                 }
             }
         }
-        rows = notices + titled + addressed
+        let open = Set(tabs.values.joined().map { "\($0.browser.bundleId) \($0.url)" })
+        let gone: [Row] = closed.filter { tab in
+            guard !open.contains("\(tab.browser) \(tab.url)") else { return false }
+            let name = Browser.named(tab.browser).name.lowercased().replacingOccurrences(of: " ", with: "")
+            return named.allSatisfy { name.contains($0) }
+        }.map(Row.closed)
+        rows = notices + titled + addressed + gone
         table.reloadData()
         let tabCount = titled.count + addressed.count
-        count.stringValue = reading.isEmpty ? "\(tabCount.formatted()) tabs" : "Reading \(reading.count) browsers…"
-        header.stringValue = browsers.isEmpty ? "No browser is open" : "Tabs"
-        let keep = selectedTab.flatMap { tab in rows.firstIndex { if case .tab(tab) = $0 { true } else { false } } }
+        count.stringValue = reading.isEmpty
+            ? "\(tabCount.formatted()) tabs" + (gone.isEmpty ? "" : " · \(gone.count.formatted()) closed")
+            : "Reading \(reading.count) browsers…"
+        header.stringValue = browsers.isEmpty && gone.isEmpty ? "No browser is open" : "Tabs"
+        let keep = selectedKey.flatMap { key in rows.firstIndex { Self.key($0) == key } }
         select(keep ?? notices.count.clamped(to: rows.count))
+    }
+
+    /// Identifies a row across reloads, so the selection stays on it.
+    private static func key(_ row: Row) -> String {
+        switch row {
+        case .tab(let tab): "tab \(tab.browser.bundleId) \(tab.windowId) \(tab.tabId) \(tab.url)"
+        case .closed(let tab): "closed \(tab.browser) \(tab.url)"
+        case .browser(let browser, _): "browser \(browser.bundleId)"
+        }
     }
 
     private func select(_ row: Int) {
@@ -259,6 +332,9 @@ final class TabSwitcher: NSObject {
             case .tab:
                 hints.append(("Go to tab", "⏎"))
                 hints.append(("Close", "⌥⌫"))
+            case .closed:
+                hints.append(("Open again", "⏎"))
+                hints.append(("Forget", "⌥⌫"))
             case .browser(_, .notAsked): hints.append(("Allow", "⏎"))
             case .browser(_, .denied): hints.append(("Open Privacy settings", "⏎"))
             case .browser(_, .silent): break
@@ -276,6 +352,15 @@ final class TabSwitcher: NSObject {
             close()
             queue.async {
                 if !Tabs.show(tab) { DispatchQueue.main.async { NSSound.beep() } }
+            }
+        case .closed(let gone):
+            guard let url = URL(string: gone.url) else { return NSSound.beep() }
+            close()
+            // In the browser it was open in, or the default one when that is gone.
+            if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: gone.browser) {
+                NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+            } else {
+                NSWorkspace.shared.open(url)
             }
         case .browser(let browser, .notAsked):
             ask(browser)
@@ -410,6 +495,11 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
             cell.imageView?.image = Self.icon(tab.browser)
             cell.set(title: tab.title.isEmpty ? Self.shortAddress(tab.url) : tab.title,
                      detail: Self.shortAddress(tab.url))
+        case .closed(let gone):
+            cell.imageView?.image = Self.icon(Browser.named(gone.browser))
+            let when = Self.relative.localizedString(for: Date(unixMillis: gone.closedAt), relativeTo: Date())
+            cell.set(title: gone.title.isEmpty ? Self.shortAddress(gone.url) : gone.title,
+                     detail: "closed \(when) · \(Self.shortAddress(gone.url))")
         case .browser(let browser, let status):
             cell.imageView?.image = Self.icon(browser)
             switch status {
@@ -434,6 +524,7 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
 extension TabSwitcher: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         reload()
+        loadClosed()
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -460,6 +551,7 @@ extension TabSwitcher: NSSearchFieldDelegate {
             } else {
                 searchField.stringValue = ""
                 reload()
+                loadClosed()
             }
         default:
             return false
