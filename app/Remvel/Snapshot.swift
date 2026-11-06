@@ -81,6 +81,12 @@ struct Snapshot {
                       lastVisit: now - 5 * 86_400_000, visitCount: 4),
                 Visit(browser: safari.bundleId, url: "https://www.rust-lang.org/learn", title: "Learn Rust",
                       lastVisit: now - 40 * 86_400_000, visitCount: 1),
+                Visit(browser: safari.bundleId, url: "https://play.rust-lang.org/?version=stable&mode=debug&gist=1a2b", title: "",
+                      lastVisit: now - 3 * 3_600_000, visitCount: 1),
+                Visit(browser: safari.bundleId, url: "https://play.rust-lang.org/?version=nightly&gist=9f8e", title: "Rust Playground",
+                      lastVisit: now - 5 * 3_600_000, visitCount: 2),
+                Visit(browser: safari.bundleId, url: "https://login.rust-lang.example/oauth2/authorize?client_id=x&state=y", title: "",
+                      lastVisit: now - 60_000, visitCount: 1),
             ], now: now)
         }) { _ in
             Self.tabSwitcher.prepareSnapshot(tabs, query: state == "tabsearch" ? "rust" : "") { view in

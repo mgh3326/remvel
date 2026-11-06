@@ -60,8 +60,10 @@ final class TabSwitcher: NSObject {
         case member(BrowserTab)
         /// Remembered by `TabMemory` and no longer open; ⏎ opens it again.
         case closed(ClosedTab)
-        /// A page from the browsers' history, while searching.
-        case visited(Visit)
+        /// Pages from the browsers' history at one address (query left out), latest first; while searching.
+        case visited([Visit])
+        /// "Closed", "History": where the open tabs end and remembered pages begin.
+        case header(String)
         /// A browser whose tabs need permission first, or that did not answer.
         case browser(Browser, Status)
     }
@@ -104,6 +106,10 @@ final class TabSwitcher: NSObject {
     /// Open tabs ("bundle id URL") whose kept page text matches the search text.
     private var inPage: Set<String> = []
     private var closedGeneration = 0
+    /// Words of the search text, marked where they occur in each row.
+    private var searchWords: [String] {
+        searchField.stringValue.lowercased().split(separator: " ").filter { !$0.hasPrefix("@") }.map(String.init)
+    }
     /// When each open tab ("bundle id URL") was last the one shown, newest first in the list.
     private var activity: [String: Int64] = [:]
     /// Rows opened with ⌥⏎ to show each of their tabs.
@@ -256,12 +262,15 @@ final class TabSwitcher: NSObject {
                          meta: "Closed \(Self.relative.localizedString(for: closedAt, relativeTo: Date()))")
             loadPageText(browser: gone.browser, url: gone.url)
             return
-        case .visited(let visit):
+        case .visited(let visits):
+            let visit = visits[0]
             let when = Self.relative.localizedString(for: Date(unixMillis: visit.lastVisit), relativeTo: Date())
-            preview.show(page: visit.url, title: visit.title, kind: Browser.named(visit.browser).name,
-                         meta: "Visited \(when)" + (visit.visitCount > 1 ? " · \(visit.visitCount) visits" : ""))
+            let count = visits.reduce(0) { $0 + $1.visitCount }
+            preview.show(page: visit.url, title: Self.title(visits), kind: Browser.named(visit.browser).name,
+                         meta: "Visited \(when)" + (count > 1 ? " · \(count) visits" : "")
+                             + (visits.count > 1 ? " · \(visits.count) addresses" : ""))
             return
-        case .browser:
+        case .browser, .header:
             preview.show(nil, force: true)
             return
         }
@@ -297,10 +306,12 @@ final class TabSwitcher: NSObject {
         case .closed(let gone):
             closed.removeAll { $0 == gone }
             Core.shared.perform("forget tab") { try $0.forgetTab(browser: gone.browser, url: gone.url) }
-        case .visited(let visit):
-            visited.removeAll { $0 == visit }
-            Core.shared.perform("forget visit") { try $0.forgetVisit(browser: visit.browser, url: visit.url) }
-        case .browser:
+        case .visited(let visits):
+            visited.removeAll { visits.contains($0) }
+            Core.shared.perform("forget visits") { store in
+                for visit in visits { try store.forgetVisit(browser: visit.browser, url: visit.url) }
+            }
+        case .browser, .header:
             return NSSound.beep()
         }
         reload()
@@ -419,12 +430,24 @@ final class TabSwitcher: NSObject {
         }.map(Row.closed)
         // History repeats what is open or closed already; those rows say more.
         let known = open.union(closed.map { "\($0.browser) \($0.url)" })
-        let history: [Row] = visited.filter { visit in
-            guard !known.contains("\(visit.browser) \(visit.url)") else { return false }
+        var pages: [[Visit]] = []
+        var at: [String: Int] = [:]
+        for visit in visited where !known.contains("\(visit.browser) \(visit.url)") {
             let name = Browser.named(visit.browser).name.lowercased().replacingOccurrences(of: " ", with: "")
-            return named.allSatisfy { name.contains($0) }
-        }.map(Row.visited)
-        rows = notices + openRows + gone + history
+            guard named.allSatisfy({ name.contains($0) }) else { continue }
+            // One row per page: sign-in flows and consoles differ only in their query.
+            let key = "\(visit.browser) \(Self.page(visit.url))"
+            if let index = at[key] { pages[index].append(visit) } else { at[key] = pages.count; pages.append([visit]) }
+        }
+        // Sign-in, token and callback pages say little about what was read; they go last.
+        let plain = pages.filter { group in !group.allSatisfy { URL(string: $0.url).map(PreviewController.looksPrivate) ?? false } }
+        let auth = pages.filter { group in group.allSatisfy { URL(string: $0.url).map(PreviewController.looksPrivate) ?? false } }
+        let history = (plain + auth).map(Row.visited)
+        // Headers only where open tabs and remembered pages meet.
+        let sections = !openRows.isEmpty || !gone.isEmpty && !history.isEmpty
+        rows = notices + openRows
+            + (gone.isEmpty ? [] : (sections ? [.header("Closed")] : []) + gone)
+            + (history.isEmpty ? [] : (sections ? [.header("History")] : []) + history)
         table.reloadData()
         let tabCount = (titled + addressed + paged).reduce(0) { $0 + $1.count }
         count.stringValue = reading.isEmpty
@@ -434,6 +457,30 @@ final class TabSwitcher: NSObject {
         header.stringValue = browsers.isEmpty && gone.isEmpty ? "No browser is open" : "Tabs"
         let keep = selectedKey.flatMap { key in rows.firstIndex { Self.key($0) == key } }
         select(keep ?? notices.count.clamped(to: rows.count))
+    }
+
+    /// Host and path, the query and fragment left out: what identifies a page in a list.
+    static func page(_ url: String) -> String {
+        guard let parts = URLComponents(string: url), let host = parts.host else { return shortAddress(url) }
+        let path = parts.path == "/" ? "" : parts.path
+        return (host.hasPrefix("www.") ? String(host.dropFirst(4)) : host) + (path.hasSuffix("/") ? String(path.dropLast()) : path)
+    }
+
+    /// The best title among visits to one page, or the page itself.
+    private static func title(_ visits: [Visit]) -> String {
+        visits.first { !$0.title.isEmpty }?.title ?? page(visits[0].url)
+    }
+
+    /// "12s", "24m", "11h", "3d", "5w": short enough for a column.
+    private static func ago(_ millis: Int64) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(Date(unixMillis: millis))))
+        switch seconds {
+        case ..<60: return "\(seconds)s"
+        case ..<3_600: return "\(seconds / 60)m"
+        case ..<86_400: return "\(seconds / 3_600)h"
+        case ..<(14 * 86_400): return "\(seconds / 86_400)d"
+        default: return "\(seconds / (7 * 86_400))w"
+        }
     }
 
     private static func groupKey(_ group: [BrowserTab]) -> String {
@@ -456,14 +503,21 @@ final class TabSwitcher: NSObject {
         case .tabs(let group): "tabs \(group[0].browser.bundleId) \(group[0].url)"
         case .member(let tab): "member \(tab.browser.bundleId) \(tab.windowId) \(tab.tabId)"
         case .closed(let tab): "closed \(tab.browser) \(tab.url)"
-        case .visited(let visit): "visited \(visit.browser) \(visit.url)"
+        case .visited(let visits): "visited \(visits[0].browser) \(page(visits[0].url))"
+        case .header(let title): "header \(title)"
         case .browser(let browser, _): "browser \(browser.bundleId)"
         }
     }
 
-    private func select(_ row: Int) {
+    /// Selects `row`, or the nearest row past a header in the direction of travel.
+    private func select(_ row: Int, step: Int = 1) {
         guard !rows.isEmpty else { return updateFooter() }
-        let row = max(0, min(row, rows.count - 1))
+        var row = max(0, min(row, rows.count - 1))
+        while case .header = rows[row] {
+            let next = row + step
+            guard next >= 0, next < rows.count else { row -= step; break }
+            row = next
+        }
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         table.scrollRowToVisible(row)
         updateFooter()
@@ -484,6 +538,7 @@ final class TabSwitcher: NSObject {
             case .closed, .visited:
                 hints.append(("Open again", "⏎"))
                 hints.append(("Forget", "⌥⌫"))
+            case .header: break
             case .browser(_, .notAsked): hints.append(("Allow", "⏎"))
             case .browser(_, .denied): hints.append(("Open Privacy settings", "⏎"))
             case .browser(_, .silent): break
@@ -529,8 +584,10 @@ final class TabSwitcher: NSObject {
             return
         case .closed(let gone):
             reopen(gone.url, in: gone.browser)
-        case .visited(let visit):
-            reopen(visit.url, in: visit.browser)
+        case .visited(let visits):
+            reopen(visits[0].url, in: visits[0].browser)
+        case .header:
+            return
         case .browser(let browser, .notAsked):
             ask(browser)
         case .browser(_, .denied):
@@ -587,6 +644,7 @@ final class TabSwitcher: NSObject {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("tab"))
         table.addTableColumn(column)
         table.headerView = nil
+        table.floatsGroupRows = false
         table.rowHeight = PopupController.rowHeight
         table.style = .inset
         table.backgroundColor = .clear
@@ -668,15 +726,43 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
         rows.count
     }
 
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        if case .header = rows[row] { true } else { false }
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { 26 } else { tableView.rowHeight }
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        if case .header = rows[row] { false } else { true }
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if case .header(let title) = rows[row] {
+            let id = NSUserInterfaceItemIdentifier("tabHeader")
+            let label = tableView.makeView(withIdentifier: id, owner: nil) as? NSTextField ?? {
+                let label = NSTextField(labelWithString: "")
+                label.identifier = id
+                label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+                label.textColor = .secondaryLabelColor
+                return label
+            }()
+            label.stringValue = "   " + title
+            return label
+        }
         let id = NSUserInterfaceItemIdentifier("tabCell")
         let cell = tableView.makeView(withIdentifier: id, owner: nil) as? TabCell ?? TabCell(identifier: id)
+        cell.marks = searchWords
+        cell.time = ""
         switch rows[row] {
+        case .header: break
         case .tabs(let group):
             let tab = group[0]
             cell.imageView?.image = Self.icon(tab.browser)
-            cell.set(title: tab.title.isEmpty ? Self.shortAddress(tab.url) : tab.title,
-                     detail: (group.count > 1 ? "×\(group.count) · " : "") + Self.shortAddress(tab.url))
+            let inPageOnly = !searchWords.isEmpty && !searchWords.allSatisfy { (tab.title + " " + tab.url).lowercased().contains($0) }
+            cell.set(title: tab.title.isEmpty ? Self.page(tab.url) : tab.title,
+                     detail: (group.count > 1 ? "×\(group.count) · " : "") + (inPageOnly ? "in page · " : "") + Self.page(tab.url))
         case .member(let tab):
             cell.imageView?.image = nil
             let windows = Array(NSOrderedSet(array: (tabs[tab.browser.bundleId] ?? []).map(\.windowId))) as? [Int] ?? []
@@ -685,14 +771,13 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
             cell.set(title: "↳ \(tab.browser.name) · window \(window), tab \(position)", detail: tab.active ? "showing" : "")
         case .closed(let gone):
             cell.imageView?.image = Self.icon(Browser.named(gone.browser))
-            let when = Self.relative.localizedString(for: Date(unixMillis: gone.closedAt), relativeTo: Date())
-            cell.set(title: gone.title.isEmpty ? Self.shortAddress(gone.url) : gone.title,
-                     detail: "closed \(when) · \(Self.shortAddress(gone.url))")
-        case .visited(let visit):
-            cell.imageView?.image = Self.icon(Browser.named(visit.browser))
-            let when = Self.relative.localizedString(for: Date(unixMillis: visit.lastVisit), relativeTo: Date())
-            cell.set(title: visit.title.isEmpty ? Self.shortAddress(visit.url) : visit.title,
-                     detail: "visited \(when) · \(Self.shortAddress(visit.url))")
+            cell.time = Self.ago(gone.closedAt)
+            cell.set(title: gone.title.isEmpty ? Self.page(gone.url) : gone.title, detail: Self.page(gone.url))
+        case .visited(let visits):
+            cell.imageView?.image = Self.icon(Browser.named(visits[0].browser))
+            cell.time = Self.ago(visits[0].lastVisit)
+            let title = Self.title(visits)
+            cell.set(title: title, detail: (visits.count > 1 ? "×\(visits.count) · " : "") + (title == Self.page(visits[0].url) ? "" : Self.page(visits[0].url)))
         case .browser(let browser, let status):
             cell.imageView?.image = Self.icon(browser)
             switch status {
@@ -725,7 +810,7 @@ extension TabSwitcher: NSSearchFieldDelegate {
         switch selector {
         case #selector(NSResponder.moveUp(_:)):
             freezeOrder()
-            select(table.selectedRow - 1)
+            select(table.selectedRow - 1, step: -1)
         case #selector(NSResponder.moveDown(_:)):
             freezeOrder()
             select(table.selectedRow + 1)
@@ -763,10 +848,13 @@ extension TabSwitcher: NSWindowDelegate {
     }
 }
 
-/// Browser icon → title, then the address dimmed.
+/// Browser icon → title (search words marked), then the page dimmed → how long ago, in a column.
 private final class TabCell: NSTableCellView {
     private var title = ""
     private var detail = ""
+    private let timeLabel = NSTextField(labelWithString: "")
+    var marks: [String] = []
+    var time = "" { didSet { timeLabel.stringValue = time } }
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { render() }
@@ -795,7 +883,19 @@ private final class TabCell: NSTableCellView {
                 .paragraphStyle: paragraph,
             ]))
         }
+        // Why the row matched, at a glance: each search word bold and underlined where it occurs.
+        let whole = text.string as NSString
+        for word in marks where !word.isEmpty {
+            var range = whole.range(of: word, options: .caseInsensitive)
+            while range.location != NSNotFound {
+                let bold = NSFont.systemFont(ofSize: range.location < (title as NSString).length ? 13 : 12, weight: .bold)
+                text.addAttributes([.font: bold, .underlineStyle: NSUnderlineStyle.single.rawValue], range: range)
+                let next = NSMaxRange(range)
+                range = whole.range(of: word, options: .caseInsensitive, range: NSRange(location: next, length: whole.length - next))
+            }
+        }
         textField?.attributedStringValue = text
+        timeLabel.textColor = selected ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.7) : .tertiaryLabelColor
     }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
@@ -808,7 +908,9 @@ private final class TabCell: NSTableCellView {
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let image = NSImageView()
         image.imageScaling = .scaleProportionallyUpOrDown
-        for sub in [image, text] {
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        timeLabel.alignment = .right
+        for sub in [image, text, timeLabel] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             addSubview(sub)
         }
@@ -820,8 +922,11 @@ private final class TabCell: NSTableCellView {
             image.widthAnchor.constraint(equalToConstant: 16),
             image.heightAnchor.constraint(equalToConstant: 16),
             text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 8),
-            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            text.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -6),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
+            timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            timeLabel.widthAnchor.constraint(equalToConstant: 32),
+            timeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
