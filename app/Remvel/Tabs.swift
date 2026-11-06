@@ -143,6 +143,50 @@ enum Tabs {
         return run(script, arguments: ["\(tab.windowId)", "\(tab.tabId)", tab.url], timeout: 5) == "ok"
     }
 
+    /// Closes the tab without bringing the browser forward. False when it is gone.
+    @discardableResult
+    static func close(_ tab: BrowserTab) -> Bool {
+        let script = tab.browser.safari ? """
+            on run argv
+                set wid to (item 1 of argv) as integer
+                set i to (item 2 of argv) as integer
+                tell application id "\(tab.browser.bundleId)"
+                    set w to window id wid
+                    set us to URL of every tab of w
+                    if i > (count of us) or (item i of us as text) is not (item 3 of argv) then
+                        set i to 0
+                        repeat with k from 1 to count of us
+                            if (item k of us as text) is (item 3 of argv) then
+                                set i to k
+                                exit repeat
+                            end if
+                        end repeat
+                        if i is 0 then return "gone"
+                    end if
+                    close tab i of w
+                end tell
+                return "ok"
+            end run
+            """ : """
+            on run argv
+                set wid to (item 1 of argv) as integer
+                set tid to (item 2 of argv) as integer
+                tell application id "\(tab.browser.bundleId)"
+                    set w to window id wid
+                    set ids to id of every tab of w
+                    repeat with k from 1 to count of ids
+                        if (item k of ids) as integer is tid then
+                            close tab k of w
+                            return "ok"
+                        end if
+                    end repeat
+                end tell
+                return "gone"
+            end run
+            """
+        return run(script, arguments: ["\(tab.windowId)", "\(tab.tabId)", tab.url], timeout: 5) == "ok"
+    }
+
     // MARK: Scripts
 
     /// Each property is one Apple Event for every tab at once; asking tab by tab is 14× slower.

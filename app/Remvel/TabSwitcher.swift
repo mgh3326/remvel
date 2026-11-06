@@ -1,6 +1,8 @@
 import AppKit
 
 private final class TabPanel: NSPanel {
+    var onTogglePreview: (() -> Void)?
+
     override var canBecomeKey: Bool { true }
 
     /// Remvel has no Edit menu to route these, so the search field gets them here.
@@ -15,6 +17,11 @@ private final class TabPanel: NSPanel {
             default: break
             }
         }
+        // keyCode 16 is Y on a US layout, so ⌘Y works while typing Korean too.
+        if flags == .command, event.keyCode == 16 {
+            onTogglePreview?()
+            return true
+        }
         return super.performKeyEquivalent(with: event)
     }
 }
@@ -22,7 +29,7 @@ private final class TabPanel: NSPanel {
 /// Every open tab of every running browser in one searchable list; ⏎ goes to the tab.
 /// Looks like the clipboard popup, and ⇥ hops between the two with the search text.
 final class TabSwitcher: NSObject {
-    static let size = NSSize(width: 520, height: 480)
+    static let size = PopupController.listOnlySize
 
     /// Where the panel goes for a size, as the clipboard popup decides.
     var placement: ((NSSize) -> NSPoint)?
@@ -53,6 +60,16 @@ final class TabSwitcher: NSObject {
     private let count = NSTextField(labelWithString: "")
     private let table = NSTableView()
     private let footer = NSTextField(labelWithString: "")
+    private let divider = NSBox()
+    /// The selected tab's page, as the clipboard popup previews a link (⌘Y or →).
+    private let preview = PreviewController()
+    private var listAlone: NSLayoutConstraint!
+    private var listBesidePreview: NSLayoutConstraint!
+    private var snapshotPreview = false
+    private var previewShown: Bool {
+        get { snapshotPreview || UserDefaults.standard.bool(forKey: "tabsPreview") }
+        set { UserDefaults.standard.set(newValue, forKey: "tabsPreview") }
+    }
     private let queue = DispatchQueue(label: "io.github.remvel.tabs", attributes: .concurrent)
 
     private var browsers: [Browser] = []
@@ -70,9 +87,10 @@ final class TabSwitcher: NSObject {
     func show(query: String = "", at topLeft: NSPoint? = nil) {
         panel.sharingType = Settings.shared.hideFromScreenSharing ? .none : .readOnly
         searchField.stringValue = query
+        applyPreview()
         if let topLeft {
             panel.setFrameTopLeftPoint(topLeft)
-        } else if let origin = placement?(Self.size) {
+        } else if let origin = placement?(panel.frame.size) {
             panel.setFrameOrigin(origin)
         }
         if !panel.isVisible { refresh() }
@@ -92,6 +110,9 @@ final class TabSwitcher: NSObject {
 
     /// For `Snapshot`: lays out these tabs without reading any browser or taking focus.
     func prepareSnapshot(_ tabs: [BrowserTab], query: String, then: @escaping (NSView) -> Void) {
+        // Shown without saving the choice: snapshots run against the user's defaults.
+        snapshotPreview = true
+        applyPreview()
         browsers = Array(Set(tabs.map(\.browser))).sorted { $0.name < $1.name }
         self.tabs = Dictionary(grouping: tabs, by: \.browser.bundleId)
         searchField.stringValue = query
@@ -142,6 +163,49 @@ final class TabSwitcher: NSObject {
         }
     }
 
+    // MARK: Preview
+
+    private func togglePreview() {
+        previewShown.toggle()
+        let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        applyPreview()
+        panel.setFrameTopLeftPoint(topLeft)
+    }
+
+    private func applyPreview() {
+        let shown = previewShown
+        preview.view.isHidden = !shown
+        divider.isHidden = !shown
+        listAlone.isActive = !shown
+        listBesidePreview.isActive = shown
+        panel.setContentSize(shown ? PopupController.previewSize : Self.size)
+        updatePreview()
+    }
+
+    private func updatePreview() {
+        guard previewShown, table.selectedRow >= 0, table.selectedRow < rows.count,
+              case .tab(let tab) = rows[table.selectedRow] else {
+            if previewShown { preview.show(nil, force: true) }
+            return
+        }
+        let windows = Set((tabs[tab.browser.bundleId] ?? []).map(\.windowId)).count
+        let count = tabs[tab.browser.bundleId]?.count ?? 0
+        preview.show(page: tab.url, title: tab.title, kind: tab.browser.name,
+                     meta: "\(count) tabs" + (windows > 1 ? " in \(windows) windows" : "") + (tab.active ? " · showing" : ""))
+    }
+
+    /// ⌥⌫: closes the selected tab where it is, without leaving Remvel.
+    private func closeSelected() {
+        let row = table.selectedRow
+        guard row >= 0, row < rows.count, case .tab(let tab) = rows[row] else { return NSSound.beep() }
+        tabs[tab.browser.bundleId]?.removeAll { $0 == tab }
+        reload()
+        select(row)
+        queue.async {
+            if !Tabs.close(tab) { DispatchQueue.main.async { NSSound.beep() } }
+        }
+    }
+
     // MARK: Rows
 
     private func reload() {
@@ -185,18 +249,22 @@ final class TabSwitcher: NSObject {
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         table.scrollRowToVisible(row)
         updateFooter()
+        updatePreview()
     }
 
     private func updateFooter() {
         var hints: [(label: String, key: String)] = []
         if table.selectedRow >= 0, table.selectedRow < rows.count {
             switch rows[table.selectedRow] {
-            case .tab: hints.append(("Go to tab", "⏎"))
+            case .tab:
+                hints.append(("Go to tab", "⏎"))
+                hints.append(("Close", "⌥⌫"))
             case .browser(_, .notAsked): hints.append(("Allow", "⏎"))
             case .browser(_, .denied): hints.append(("Open Privacy settings", "⏎"))
             case .browser(_, .silent): break
             }
         }
+        hints.append(("Preview", "⌘Y"))
         hints.append(("Clipboard", "⇥"))
         footer.attributedStringValue = PopupController.hints(hints)
     }
@@ -232,6 +300,7 @@ final class TabSwitcher: NSObject {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = self
+        panel.onTogglePreview = { [weak self] in self?.togglePreview() }
 
         let background = NSVisualEffectView()
         background.material = .popover
@@ -269,10 +338,14 @@ final class TabSwitcher: NSObject {
         line.boxType = .separator
         footer.lineBreakMode = .byTruncatingTail
 
-        for sub in [searchField, header, count, scroll, line, footer] as [NSView] {
+        divider.boxType = .separator
+        for sub in [searchField, header, count, scroll, divider, preview.view, line, footer] as [NSView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             background.addSubview(sub)
         }
+        listAlone = scroll.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -4)
+        listBesidePreview = scroll.widthAnchor.constraint(equalToConstant: PopupController.listWidth)
+        listAlone.isActive = true
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: background.topAnchor, constant: 12),
             searchField.heightAnchor.constraint(equalToConstant: 32),
@@ -281,10 +354,16 @@ final class TabSwitcher: NSObject {
             header.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
             header.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 22),
             count.firstBaselineAnchor.constraint(equalTo: header.firstBaselineAnchor),
-            count.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -18),
+            count.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -14),
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
             scroll.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 4),
-            scroll.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -4),
+            divider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
+            divider.bottomAnchor.constraint(equalTo: line.topAnchor),
+            divider.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 4),
+            preview.view.topAnchor.constraint(equalTo: header.topAnchor),
+            preview.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 16),
+            preview.view.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
+            preview.view.bottomAnchor.constraint(equalTo: line.topAnchor, constant: -12),
             scroll.bottomAnchor.constraint(equalTo: line.topAnchor, constant: -4),
             line.leadingAnchor.constraint(equalTo: background.leadingAnchor),
             line.trailingAnchor.constraint(equalTo: background.trailingAnchor),
@@ -348,6 +427,7 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateFooter()
+        updatePreview()
     }
 }
 
@@ -365,6 +445,11 @@ extension TabSwitcher: NSSearchFieldDelegate {
             select(table.selectedRow + 1)
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             activate(table.selectedRow)
+        case #selector(NSResponder.moveRight(_:))
+            where !previewShown && textView.selectedRange() == NSRange(location: textView.string.utf16.count, length: 0):
+            togglePreview()
+        case #selector(NSResponder.deleteWordBackward(_:)) where NSApp.currentEvent?.modifierFlags.contains(.option) == true:
+            closeSelected()
         case #selector(NSResponder.insertTab(_:)):
             let query = searchField.stringValue
             close()

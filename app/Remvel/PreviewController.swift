@@ -248,43 +248,68 @@ final class PreviewController: NSObject {
             : String(format: "#%02X%02X%02X", r, g, b)
     }
 
-    /// Shows what is known about the link at once, then the page's title and image when they arrive.
+    /// A browser tab: its page as a link card and its address large, as for a copied link.
+    /// `kind` and `meta` take the places of the item's kind and dates.
+    func show(page address: String, title: String, kind: String, meta: String) {
+        show(nil, force: true)
+        kindLabel.stringValue = kind
+        self.meta.stringValue = meta
+        self.meta.toolTip = nil
+        textScroll.isHidden = true
+        linkView.isHidden = false
+        if !showAddress(address, title: title, fetch: Settings.shared.linkPreviews) {
+            // edge://settings and the like: nothing to fetch, so the address alone.
+            linkView.isHidden = true
+            caption.isHidden = true
+            textScroll.isHidden = false
+            textView.string = title.isEmpty ? address : "\(title)\n\n\(address)"
+        }
+    }
+
     private func loadLink(_ id: Int64) {
         let gen = generation
         Core.shared.run({ try $0.previewText(id: id, byteOffset: 0, maxBytes: 4096) }) { [weak self] result in
             guard let self, gen == self.generation else { return }
             let text = (try? result.get())?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard let url = URL(string: text), url.scheme == "http" || url.scheme == "https" else {
+            if !self.showAddress(text, title: nil, fetch: true) {
                 self.linkView.isHidden = true
                 self.caption.isHidden = true
                 self.urlLabel.isHidden = true
                 self.textScroll.isHidden = false
                 self.loadNextChunk()
-                return
-            }
-            self.caption.stringValue = text
-            self.caption.toolTip = text
-            self.urlLabel.attributedStringValue = Self.styledAddress(url, text)
-            if let cached = Self.linkCache.object(forKey: url as NSURL) {
-                self.showLink(cached)
-                return
-            }
-            let placeholder = LPLinkMetadata()
-            placeholder.originalURL = url
-            placeholder.url = url
-            self.showLink(placeholder)
-            guard !Self.looksPrivate(url) else { return }
-            let fetch = LPMetadataProvider()
-            fetch.timeout = 6
-            self.linkFetch = fetch
-            fetch.startFetchingMetadata(for: url) { metadata, _ in
-                DispatchQueue.main.async {
-                    guard let metadata else { return }
-                    Self.linkCache.setObject(metadata, forKey: url as NSURL)
-                    if gen == self.generation { self.showLink(metadata) }
-                }
             }
         }
+    }
+
+    /// Shows what is known about the link at once, then the page's title and image when they arrive.
+    /// False, showing nothing, when `text` is not a web address.
+    private func showAddress(_ text: String, title: String?, fetch: Bool) -> Bool {
+        guard let url = URL(string: text), url.scheme == "http" || url.scheme == "https" else { return false }
+        let gen = generation
+        caption.stringValue = text
+        caption.toolTip = text
+        urlLabel.attributedStringValue = Self.styledAddress(url, text)
+        if let cached = Self.linkCache.object(forKey: url as NSURL) {
+            showLink(cached)
+            return true
+        }
+        let placeholder = LPLinkMetadata()
+        placeholder.originalURL = url
+        placeholder.url = url
+        if let title, !title.isEmpty { placeholder.title = title }
+        showLink(placeholder)
+        guard fetch, !Self.looksPrivate(url) else { return true }
+        let provider = LPMetadataProvider()
+        provider.timeout = 6
+        linkFetch = provider
+        provider.startFetchingMetadata(for: url) { metadata, _ in
+            DispatchQueue.main.async {
+                guard let metadata else { return }
+                Self.linkCache.setObject(metadata, forKey: url as NSURL)
+                if gen == self.generation { self.showLink(metadata) }
+            }
+        }
+        return true
     }
 
     /// A page with a picture gets the full card and the address as a caption; one without

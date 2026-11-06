@@ -66,7 +66,7 @@ The Shortcuts app lists Remvel's actions (search, recent items, get text, copy, 
 
 ### Search browser tabs
 
-⌃⌥B opens every tab of every open browser in one list: Safari and the Chromium family (Edge, Chrome, Whale, Arc, Brave, Aside…). Type to filter by title or address, `@whale` to keep one browser, and ⏎ goes to the tab, bringing its window forward on its desktop. ⇥ switches between the tab list and the clipboard popup, keeping what you typed.
+⌃⌥B opens every tab of every open browser in one list: Safari and the Chromium family (Edge, Chrome, Whale, Arc, Brave, Aside…). Type to filter by title or address, `@whale` to keep one browser, and ⏎ goes to the tab, bringing its window forward on its desktop. ⌥⌫ closes the selected tab where it is, and ⌘Y (or →) shows its page beside the list, as the clipboard popup previews a link. ⇥ switches between the tab list and the clipboard popup, keeping what you typed.
 
 Tabs are read through AppleScript only when the list opens, about half a second for a few hundred tabs, and nothing watches your browsers. The first time, macOS asks once per browser whether Remvel may control it; until you allow it, the list shows a row that asks. Firefox has no AppleScript, so its tabs are not listed.
 
