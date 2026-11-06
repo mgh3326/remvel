@@ -19,6 +19,10 @@ final class TabMemory {
     private var workspaceObservers: [NSObjectProtocol] = []
     /// Accessibility observers of running browsers, by process.
     private var observers: [pid_t: AXObserver] = [:]
+    /// What the last read stored per browser, so an unchanged list is not written again.
+    private var lastStored: [String: Int] = [:]
+    /// The page whose text was kept last per browser, so it is not read again while it stays in front.
+    private var lastText: [String: String] = [:]
 
     func setEnabled(_ enabled: Bool) {
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
@@ -34,7 +38,7 @@ final class TabMemory {
                 if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication { action(app) }
             })
         }
-        on(NSWorkspace.didDeactivateApplicationNotification) { [weak self] in self?.read($0) }
+        on(NSWorkspace.didDeactivateApplicationNotification) { [weak self] in self?.read($0, leaving: true) }
         on(NSWorkspace.didLaunchApplicationNotification) { [weak self] in self?.watch($0) }
         on(NSWorkspace.didTerminateApplicationNotification) { [weak self] app in
             guard let self, let observer = observers.removeValue(forKey: app.processIdentifier) else { return }
@@ -93,7 +97,9 @@ final class TabMemory {
     }
 
     private func changed(_ pid: pid_t) {
-        guard let app = NSRunningApplication(processIdentifier: pid), let id = app.bundleIdentifier else { return }
+        // Background tabs retitle themselves ("(3) Slack", timers); only what the user is using counts.
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              let app = NSRunningApplication(processIdentifier: pid), let id = app.bundleIdentifier else { return }
         pending[id]?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.pending[id] = nil
@@ -105,9 +111,11 @@ final class TabMemory {
 
     // MARK: Reading
 
-    private func read(_ app: NSRunningApplication) {
+    /// `leaving`: the user just switched away, so the tab in front was looked at until now.
+    /// Always read, and always written, whatever the interval.
+    private func read(_ app: NSRunningApplication, leaving: Bool = false) {
         guard Browser.isBrowser(app), let id = app.bundleIdentifier else { return }
-        if let last = lastRead[id], Date().timeIntervalSince(last) < Self.minInterval {
+        if !leaving, let last = lastRead[id], Date().timeIntervalSince(last) < Self.minInterval {
             // Too soon after the last read: catch this change once the interval is up.
             if pending[id] == nil {
                 let work = DispatchWorkItem { [weak self] in
@@ -123,21 +131,42 @@ final class TabMemory {
         lastRead[id] = Date()
         let browser = Browser.named(id)
         let withText = Settings.shared.tabPageText
+        let started = Date()
         queue.async {
             // Never prompts: a browser not allowed yet is asked for from the switcher.
             guard Tabs.access(browser, ask: false) == .allowed, let tabs = Tabs.read(browser) else { return }
-            // Read because the user is using it or just left it: its front tab is the one they saw.
-            self.store(browser, tabs, front: true)
-            if withText, let page = Tabs.pageText(browser) {
-                Core.shared.perform("tab text") { try $0.setTabText(browser: browser.bundleId, url: page.url, text: page.text) }
+            let front = Self.frontTab(tabs)
+            DispatchQueue.main.async {
+                // Read because the user is using it or just left it: its front tab is the one they saw.
+                if leaving { self.lastStored[id] = nil }
+                let stored = self.store(browser, tabs, front: true)
+                // The page in front changed: keep its text, once.
+                let wantText = withText && front != nil && self.lastText[id] != front?.url
+                Log.tabs.debug("read \(browser.name, privacy: .public): \(tabs.count) tabs, \(Int(Date().timeIntervalSince(started) * 1000)) ms, stored \(stored), text \(wantText)")
+                guard wantText else { return }
+                self.queue.async {
+                    guard let page = Tabs.pageText(browser) else { return }
+                    DispatchQueue.main.async { self.lastText[id] = page.url }
+                    Core.shared.perform("tab text") { try $0.setTabText(browser: browser.bundleId, url: page.url, text: page.text) }
+                }
             }
         }
     }
 
-    private func store(_ browser: Browser, _ tabs: [BrowserTab], front: Bool) {
+    /// Hands the list to the core unless it is the one stored last. Main thread. Returns whether it wrote.
+    @discardableResult
+    private func store(_ browser: Browser, _ tabs: [BrowserTab], front: Bool) -> Bool {
         let shown = front ? Self.frontTab(tabs) : nil
         let seen = tabs.map { TabSeen(url: $0.url, title: $0.title, active: $0 == shown) }
+        var hasher = Hasher()
+        for tab in seen { hasher.combine(tab.url); hasher.combine(tab.title); hasher.combine(tab.active) }
+        let digest = hasher.finalize()
+        // Unchanged, and no tab newly in front: nothing to write. A front tab marks its time,
+        // so a list with one is written when the front tab differs from last time.
+        guard lastStored[browser.bundleId] != digest else { return false }
+        lastStored[browser.bundleId] = digest
         let now = Date().unixMillis
         Core.shared.perform("record tabs") { try $0.recordTabs(browser: browser.bundleId, tabs: seen, at: now) }
+        return true
     }
 }

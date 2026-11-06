@@ -57,9 +57,13 @@ final class HistoryImport {
         if FileManager.default.fileExists(atPath: safariHistory.path) { sources.append((safari, safariHistory, true)) }
 
         let now = Date().unixMillis
+        let started = Date()
+        var total = 0
+        defer { Log.history.info("imported \(total) visits from \(sources.count) histories in \(Int(Date().timeIntervalSince(started) * 1000)) ms") }
         for source in sources {
             let since = max(lastVisit(source.browser), now - year)
             let visits = read(source.file, browser: source.browser, safari: source.safari, since: since)
+            total += visits.count
             // Chunks keep each core call short, so a search typed meanwhile is not held up.
             for start in stride(from: 0, to: visits.count, by: 2_000) {
                 let chunk = Array(visits[start ..< min(start + 2_000, visits.count)])

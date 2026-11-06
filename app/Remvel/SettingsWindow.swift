@@ -67,7 +67,7 @@ private struct SettingsView: View {
                                 try SMAppService.mainApp.unregister()
                             }
                         } catch {
-                            NSLog("Remvel: launch at login failed: \(error)")
+                            Log.app.error("launch at login failed: \(String(describing: error), privacy: .public)")
                             launchAtLogin = SMAppService.mainApp.status == .enabled
                         }
                     }

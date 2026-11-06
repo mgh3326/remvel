@@ -86,7 +86,7 @@ final class TextRecognizer {
         do {
             try process.run()
         } catch {
-            NSLog("Remvel: text recognition did not start: \(error)")
+            Log.app.error("text recognition did not start: \(String(describing: error), privacy: .public)")
             return nil
         }
         DispatchQueue.global(qos: .utility).async {

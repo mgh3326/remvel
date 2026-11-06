@@ -98,7 +98,7 @@ final class HistoryModel {
             guard let self, gen == self.generation else { return }
             switch result {
             case .success(let hits): self.reset(count: hits.count, hits: hits)
-            case .failure(let error): NSLog("Remvel: search failed: \(error)")
+            case .failure(let error): Log.core.error("search failed: \(String(describing: error), privacy: .public)")
             }
         }
     }

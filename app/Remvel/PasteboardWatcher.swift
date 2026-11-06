@@ -100,7 +100,7 @@ final class PasteboardWatcher {
             case .success(let ingest) where !ingest.deduplicated && Preprocessor.imageData(reps) != nil:
                 TextRecognizer.shared.recognize(ingest.id)
             case .failure(let error):
-                NSLog("Remvel: ingest failed: \(error)")
+                Log.core.error("ingest failed: \(String(describing: error), privacy: .public)")
             default:
                 break
             }

@@ -305,14 +305,18 @@ final class PreviewController: NSObject {
         if let title, !title.isEmpty { placeholder.title = title }
         showLink(placeholder)
         guard fetch, !Self.looksPrivate(url) else { return true }
-        let provider = LPMetadataProvider()
-        provider.timeout = 6
-        linkFetch = provider
-        provider.startFetchingMetadata(for: url) { metadata, _ in
-            DispatchQueue.main.async {
-                guard let metadata else { return }
-                Self.linkCache.setObject(metadata, forKey: url as NSURL)
-                if gen == self.generation { self.showLink(metadata) }
+        // Only once the selection rests: holding ↓ through a list must not load every page on the way.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, gen == self.generation else { return }
+            let provider = LPMetadataProvider()
+            provider.timeout = 6
+            linkFetch = provider
+            provider.startFetchingMetadata(for: url) { metadata, _ in
+                DispatchQueue.main.async {
+                    guard let metadata else { return }
+                    Self.linkCache.setObject(metadata, forKey: url as NSURL)
+                    if gen == self.generation { self.showLink(metadata) }
+                }
             }
         }
         return true

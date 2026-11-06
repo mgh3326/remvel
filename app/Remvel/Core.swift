@@ -32,7 +32,7 @@ final class Core {
     func perform(_ what: String, _ work: @escaping (Remvel) throws -> Void, then: (() -> Void)? = nil) {
         run(work) { result in
             if case .failure(let error) = result {
-                NSLog("Remvel: \(what) failed: \(error)")
+                Log.core.error("\(what, privacy: .public) failed: \(String(describing: error), privacy: .public)")
             }
             then?()
         }

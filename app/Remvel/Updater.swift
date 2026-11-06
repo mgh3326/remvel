@@ -180,7 +180,7 @@ final class Updater {
     private func fail(_ error: Swift.Error) {
         installing = false
         onChange?()
-        NSLog("Remvel: update failed: \(error)")
+        Log.app.error("update failed: \(String(describing: error), privacy: .public)")
         let alert = NSAlert()
         alert.messageText = "Remvel could not update"
         alert.informativeText = (error as? UpdateError)?.message ?? error.localizedDescription
