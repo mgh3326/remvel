@@ -75,6 +75,17 @@ const MIGRATIONS: &[&str] = &[
          UNIQUE (browser, url)
      );
      CREATE INDEX tabs_closed ON tabs(closed_at DESC, id DESC) WHERE closed_at IS NOT NULL;",
+    // 6: pages visited, copied from the browsers' history (history.rs).
+    "CREATE TABLE history (
+         id          INTEGER PRIMARY KEY,
+         browser     TEXT    NOT NULL,
+         url         TEXT    NOT NULL,
+         title       TEXT    NOT NULL,
+         last_visit  INTEGER NOT NULL,
+         visit_count INTEGER NOT NULL,
+         UNIQUE (browser, url)
+     );
+     CREATE INDEX history_recent ON history(last_visit DESC, id DESC);",
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {

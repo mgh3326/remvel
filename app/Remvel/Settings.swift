@@ -134,6 +134,8 @@ final class Settings: ObservableObject {
     @Published var rememberTabs: Bool { didSet { defaults.set(rememberTabs, forKey: "rememberTabs") } }
     /// Keep the text of the page a browser showed, so closed tabs are found by what they said.
     @Published var tabPageText: Bool { didSet { defaults.set(tabPageText, forKey: "tabPageText") } }
+    /// Copy the browsers' history into Remvel, so the tab list searches pages visited before.
+    @Published var importHistory: Bool { didSet { defaults.set(importHistory, forKey: "importHistory") } }
     /// Opens the switcher over every browser's open tabs.
     @Published var tabsHotkey: KeyCombo {
         didSet { defaults.set(try? JSONEncoder().encode(tabsHotkey), forKey: "tabsHotkey") }
@@ -160,6 +162,7 @@ final class Settings: ObservableObject {
             ?? .default
         rememberTabs = defaults.object(forKey: "rememberTabs") as? Bool ?? true
         tabPageText = defaults.object(forKey: "tabPageText") as? Bool ?? true
+        importHistory = defaults.object(forKey: "importHistory") as? Bool ?? true
         tabsHotkey = defaults.data(forKey: "tabsHotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .tabs
     }

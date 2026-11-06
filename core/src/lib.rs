@@ -4,6 +4,7 @@
 //! Everything a list row or search needs is computed once at ingest time.
 
 mod ffi;
+mod history;
 mod kind;
 mod schema;
 mod search;
@@ -11,6 +12,7 @@ mod store;
 mod tabs;
 
 pub use ffi::{Remvel, file_paths_uti};
+pub use history::Visit;
 pub use kind::Kind;
 pub use search::{Filter, SearchHit, SearchMode};
 pub use store::{Capture, Facet, Facets, IngestResult, ItemSummary, KindFacet, Rep, Store, UTI_FILE_PATHS, pin_value};

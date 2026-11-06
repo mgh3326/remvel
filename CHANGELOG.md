@@ -9,6 +9,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 - A link whose page shows no picture (a sign-in wall, a bot check, a private link) shows its full address large under the card, host in bold.
 - Link rows drop `https://` and `www.` and cut the middle of a long address, so links to one site show where they differ.
 - ⌃⌥B searches the open tabs of Safari and every Chromium browser (Edge, Chrome, Whale, Arc…) and goes to the one you pick (⏎), closes it (⌥⌫) or previews its page (⌘Y). ⇥ switches between it and the clipboard popup.
+- Searching tabs also finds pages from the browsers' history, kept in Remvel for a year: Chromium browsers as they are, Safari with Full Disk Access.
 - Closed browser tabs stay searchable in the tab list, by title, address, or the text of the page, and ⏎ opens one again. Remvel reads a browser's tabs as you use it, when its window title changes or you leave it; open tabs are found by their page text too, and ⌘A works with Korean input.
 - Image rows show a thumbnail and the first words found in the image, so screenshots of one size tell apart.
 - ⌘K opens the selected item's actions in a list inside the popup (type to filter, ↑↓, ⏎, Esc): paste, copy, pin, delete, and paste it changed — UPPERCASE, lowercase, Title Case, camelCase, snake_case, kebab-case, trimmed, joined, sorted or de-duplicated lines, formatted or minified JSON, URL and Base64 encoded or decoded. Right-click a row opens the same list.

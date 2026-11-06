@@ -45,6 +45,8 @@ final class TabSwitcher: NSObject {
         case tab(BrowserTab)
         /// Remembered by `TabMemory` and no longer open; ⏎ opens it again.
         case closed(ClosedTab)
+        /// A page from the browsers' history, while searching.
+        case visited(Visit)
         /// A browser whose tabs need permission first, or that did not answer.
         case browser(Browser, Status)
     }
@@ -83,6 +85,7 @@ final class TabSwitcher: NSObject {
     private var reading: Set<String> = []
     private var rows: [Row] = []
     private var closed: [ClosedTab] = []
+    private var visited: [Visit] = []
     /// Open tabs ("bundle id URL") whose kept page text matches the search text.
     private var inPage: Set<String> = []
     private var closedGeneration = 0
@@ -107,7 +110,10 @@ final class TabSwitcher: NSObject {
         } else if let origin = placement?(panel.frame.size) {
             panel.setFrameOrigin(origin)
         }
-        if !panel.isVisible { refresh() }
+        if !panel.isVisible {
+            refresh()
+            HistoryImport.shared.run()
+        }
         reload()
         loadRemembered()
         NSApp.activate(ignoringOtherApps: false)
@@ -217,6 +223,11 @@ final class TabSwitcher: NSObject {
                          meta: "Closed \(Self.relative.localizedString(for: closedAt, relativeTo: Date()))")
             loadPageText(browser: gone.browser, url: gone.url)
             return
+        case .visited(let visit):
+            let when = Self.relative.localizedString(for: Date(unixMillis: visit.lastVisit), relativeTo: Date())
+            preview.show(page: visit.url, title: visit.title, kind: Browser.named(visit.browser).name,
+                         meta: "Visited \(when)" + (visit.visitCount > 1 ? " · \(visit.visitCount) visits" : ""))
+            return
         case .browser:
             preview.show(nil, force: true)
             return
@@ -257,6 +268,9 @@ final class TabSwitcher: NSObject {
         case .closed(let gone):
             closed.removeAll { $0 == gone }
             Core.shared.perform("forget tab") { try $0.forgetTab(browser: gone.browser, url: gone.url) }
+        case .visited(let visit):
+            visited.removeAll { $0 == visit }
+            Core.shared.perform("forget visit") { try $0.forgetVisit(browser: visit.browser, url: visit.url) }
         case .browser:
             return NSSound.beep()
         }
@@ -274,11 +288,13 @@ final class TabSwitcher: NSObject {
         // Browsing shows the latest few; a search looks through all of them.
         let limit: Int64 = text.isEmpty ? 30 : 300
         Core.shared.run({ store in
-            (try store.closedTabs(query: text, limit: limit), try store.openTabsWithText(query: text, limit: 300))
+            (try store.closedTabs(query: text, limit: limit), try store.openTabsWithText(query: text, limit: 300),
+             try store.searchVisits(query: text, limit: 300))
         }) { [weak self] result in
-            guard let self, generation == closedGeneration, case .success(let (found, pages)) = result else { return }
+            guard let self, generation == closedGeneration, case .success(let (found, pages, visits)) = result else { return }
             closed = found
             inPage = Set(pages.map { "\($0.browser) \($0.url)" })
+            visited = visits
             reload()
         }
     }
@@ -319,11 +335,19 @@ final class TabSwitcher: NSObject {
             let name = Browser.named(tab.browser).name.lowercased().replacingOccurrences(of: " ", with: "")
             return named.allSatisfy { name.contains($0) }
         }.map(Row.closed)
-        rows = notices + titled + addressed + paged + gone
+        // History repeats what is open or closed already; those rows say more.
+        let known = open.union(closed.map { "\($0.browser) \($0.url)" })
+        let history: [Row] = visited.filter { visit in
+            guard !known.contains("\(visit.browser) \(visit.url)") else { return false }
+            let name = Browser.named(visit.browser).name.lowercased().replacingOccurrences(of: " ", with: "")
+            return named.allSatisfy { name.contains($0) }
+        }.map(Row.visited)
+        rows = notices + titled + addressed + paged + gone + history
         table.reloadData()
         let tabCount = titled.count + addressed.count + paged.count
         count.stringValue = reading.isEmpty
-            ? "\(tabCount.formatted()) tabs" + (gone.isEmpty ? "" : " · \(gone.count.formatted()) closed")
+            ? (tabCount == 1 ? "1 tab" : "\(tabCount.formatted()) tabs") + (gone.isEmpty ? "" : " · \(gone.count.formatted()) closed")
+                + (history.isEmpty ? "" : " · \(history.count.formatted()) visited")
             : "Reading \(reading.count) browsers…"
         header.stringValue = browsers.isEmpty && gone.isEmpty ? "No browser is open" : "Tabs"
         let keep = selectedKey.flatMap { key in rows.firstIndex { Self.key($0) == key } }
@@ -335,6 +359,7 @@ final class TabSwitcher: NSObject {
         switch row {
         case .tab(let tab): "tab \(tab.browser.bundleId) \(tab.windowId) \(tab.tabId) \(tab.url)"
         case .closed(let tab): "closed \(tab.browser) \(tab.url)"
+        case .visited(let visit): "visited \(visit.browser) \(visit.url)"
         case .browser(let browser, _): "browser \(browser.bundleId)"
         }
     }
@@ -355,7 +380,7 @@ final class TabSwitcher: NSObject {
             case .tab:
                 hints.append(("Go to tab", "⏎"))
                 hints.append(("Close", "⌥⌫"))
-            case .closed:
+            case .closed, .visited:
                 hints.append(("Open again", "⏎"))
                 hints.append(("Forget", "⌥⌫"))
             case .browser(_, .notAsked): hints.append(("Allow", "⏎"))
@@ -377,14 +402,9 @@ final class TabSwitcher: NSObject {
                 if !Tabs.show(tab) { DispatchQueue.main.async { NSSound.beep() } }
             }
         case .closed(let gone):
-            guard let url = URL(string: gone.url) else { return NSSound.beep() }
-            close()
-            // In the browser it was open in, or the default one when that is gone.
-            if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: gone.browser) {
-                NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
-            } else {
-                NSWorkspace.shared.open(url)
-            }
+            reopen(gone.url, in: gone.browser)
+        case .visited(let visit):
+            reopen(visit.url, in: visit.browser)
         case .browser(let browser, .notAsked):
             ask(browser)
         case .browser(_, .denied):
@@ -392,6 +412,17 @@ final class TabSwitcher: NSObject {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
         case .browser(_, .silent):
             NSSound.beep()
+        }
+    }
+
+    /// In the browser it was open in, or the default one when that is gone.
+    private func reopen(_ address: String, in browser: String) {
+        guard let url = URL(string: address) else { return NSSound.beep() }
+        close()
+        if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: browser) {
+            NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -415,7 +446,7 @@ final class TabSwitcher: NSObject {
         background.state = .active
         panel.contentView = background
 
-        searchField.placeholderString = "Search open tabs      @browser"
+        searchField.placeholderString = "Search tabs and history      @browser"
         searchField.delegate = self
         searchField.font = .systemFont(ofSize: 14)
         searchField.controlSize = .large
@@ -523,6 +554,11 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
             let when = Self.relative.localizedString(for: Date(unixMillis: gone.closedAt), relativeTo: Date())
             cell.set(title: gone.title.isEmpty ? Self.shortAddress(gone.url) : gone.title,
                      detail: "closed \(when) · \(Self.shortAddress(gone.url))")
+        case .visited(let visit):
+            cell.imageView?.image = Self.icon(Browser.named(visit.browser))
+            let when = Self.relative.localizedString(for: Date(unixMillis: visit.lastVisit), relativeTo: Date())
+            cell.set(title: visit.title.isEmpty ? Self.shortAddress(visit.url) : visit.title,
+                     detail: "visited \(when) · \(Self.shortAddress(visit.url))")
         case .browser(let browser, let status):
             cell.imageView?.image = Self.icon(browser)
             switch status {

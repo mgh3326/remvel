@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher.start()
         // Old screenshots become searchable in the background, after launch has settled.
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { TextRecognizer.shared.backfill() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { HistoryImport.shared.run() }
 
         if !settings.hasOnboarded {
             settings.hasOnboarded = true

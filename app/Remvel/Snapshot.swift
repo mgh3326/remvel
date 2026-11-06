@@ -30,7 +30,7 @@ struct Snapshot {
 
     func run(popup: PopupController) {
         NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        if state == "tabs" {
+        if state == "tabs" || state == "tabsearch" {
             renderTabs()
             return
         }
@@ -75,8 +75,14 @@ struct Snapshot {
         Core.shared.run({ store in
             try store.recordTabs(browser: whale.bundleId, tabs: gone, at: now - 3 * 86_400_000)
             try store.recordTabs(browser: whale.bundleId, tabs: [], at: now - 2 * 3_600_000)
+            try store.importVisits(visits: [
+                Visit(browser: edge.bundleId, url: "https://crates.io/crates/rusqlite", title: "rusqlite - crates.io: Rust Package Registry",
+                      lastVisit: now - 5 * 86_400_000, visitCount: 4),
+                Visit(browser: safari.bundleId, url: "https://www.rust-lang.org/learn", title: "Learn Rust",
+                      lastVisit: now - 40 * 86_400_000, visitCount: 1),
+            ], now: now)
         }) { _ in
-            Self.tabSwitcher.prepareSnapshot(tabs, query: "") { view in
+            Self.tabSwitcher.prepareSnapshot(tabs, query: state == "tabsearch" ? "rust" : "") { view in
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
                 view.cacheDisplay(in: view.bounds, to: rep)
                 try! rep.representation(using: .png, properties: [:])!.write(to: output)

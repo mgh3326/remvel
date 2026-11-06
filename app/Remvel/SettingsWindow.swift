@@ -30,6 +30,7 @@ private struct SettingsView: View {
     @ObservedObject private var windows = WindowMover.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var selectedApp: String?
+    @State private var safariReadable = HistoryImport.safariReadable
 
     var body: some View {
         Form {
@@ -87,10 +88,28 @@ private struct SettingsView: View {
                 Toggle("Remember tabs, so closed ones can be found again", isOn: $settings.rememberTabs)
                 Toggle("Keep the text of the page you were reading", isOn: $settings.tabPageText)
                     .disabled(!settings.rememberTabs)
+                Toggle("Search browser history", isOn: $settings.importHistory)
+                    .onChange(of: settings.importHistory) { _, enabled in
+                        if enabled { HistoryImport.shared.run(force: true) }
+                    }
+                if settings.importHistory && !safariReadable {
+                    HStack {
+                        Text("Safari's history needs Full Disk Access.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open Settings…") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+                        }
+                        Button("Check Again") {
+                            safariReadable = HistoryImport.safariReadable
+                            if safariReadable { HistoryImport.shared.run(force: true) }
+                        }
+                    }
+                }
             } header: {
                 Text("Browser tabs")
             } footer: {
-                Text("A browser's tabs are read as you use it (when its window title changes or you switch away, at most every ten seconds) and stored only on this Mac. Closed tabs show below the open ones in the tab list; ⏎ opens one again. Safari gives page text as is; Chromium browsers (Edge, Chrome, Whale…) give it once View › Developer › Allow JavaScript from Apple Events is on.")
+                Text("A browser's tabs are read as you use it (when its window title changes or you switch away, at most every ten seconds) and stored only on this Mac. Closed tabs show below the open ones in the tab list, and pages from the browsers' history (a year at most) below those while you search; ⏎ opens one again. Safari gives page text as is; Chromium browsers (Edge, Chrome, Whale…) give it once View › Developer › Allow JavaScript from Apple Events is on.")
                     .foregroundStyle(.secondary)
             }
             Section {

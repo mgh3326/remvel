@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::{
     Capture, ClosedTab, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, TabKey, TabSeen,
-    UTI_FILE_PATHS,
+    UTI_FILE_PATHS, Visit,
 };
 
 /// The pasteboard type of Remvel's own rep for file copies: every copied path, one per line.
@@ -138,6 +138,24 @@ impl Remvel {
 
     pub fn tab_text(&self, browser: String, url: String) -> Result<Option<String>> {
         self.store().tab_text(&browser, &url)
+    }
+
+    /// Visits read from a browser's history; a year's worth is kept, at most 100,000.
+    pub fn import_visits(&self, visits: Vec<Visit>, now: i64) -> Result<()> {
+        self.store().import_visits(&visits, now)
+    }
+
+    /// The latest visit stored for `browser`, Unix ms, or 0: where the next import starts.
+    pub fn last_visit(&self, browser: String) -> Result<i64> {
+        self.store().last_visit(&browser)
+    }
+
+    pub fn search_visits(&self, query: String, limit: i64) -> Result<Vec<Visit>> {
+        self.store().search_visits(&query, limit)
+    }
+
+    pub fn forget_visit(&self, browser: String, url: String) -> Result<()> {
+        self.store().forget_visit(&browser, &url)
     }
 
     /// Open tabs whose kept page text holds every word of `query`.

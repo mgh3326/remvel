@@ -10,6 +10,8 @@ use crate::{Result, Store};
 
 /// Closed tabs kept at most; the oldest go first.
 const MAX_CLOSED: i64 = 20_000;
+/// Closed tabs are kept for a year, as visits are (history.rs).
+const MAX_CLOSED_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 /// Page text kept per tab, in characters.
 const MAX_TEXT_CHARS: usize = 100_000;
 
@@ -67,6 +69,7 @@ impl Store {
                  SELECT id FROM tabs WHERE closed_at IS NOT NULL ORDER BY closed_at DESC, id DESC LIMIT -1 OFFSET ?1)",
             [MAX_CLOSED],
         )?;
+        tx.execute("DELETE FROM tabs WHERE closed_at < ?1", [at - MAX_CLOSED_AGE_MS])?;
         tx.commit()?;
         Ok(())
     }
@@ -148,7 +151,7 @@ impl Store {
     }
 }
 
-fn escape_like(word: &str) -> String {
+pub(crate) fn escape_like(word: &str) -> String {
     word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
