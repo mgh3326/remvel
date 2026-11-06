@@ -108,6 +108,9 @@ final class TabSwitcher: NSObject {
     private var activity: [String: Int64] = [:]
     /// Rows opened with ⌥⏎ to show each of their tabs.
     private var expanded: Set<String> = []
+    /// Row order once the user starts moving through or closing tabs, until the list closes.
+    /// Closing a tab changes which tab its window shows, which would re-rank the list under the cursor.
+    private var frozenOrder: [String: Int]?
 
     private static let relative: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -131,6 +134,7 @@ final class TabSwitcher: NSObject {
         }
         if !panel.isVisible {
             expanded = []
+            frozenOrder = nil
             refresh()
             HistoryImport.shared.run()
         }
@@ -283,6 +287,7 @@ final class TabSwitcher: NSObject {
     private func closeSelected() {
         let row = table.selectedRow
         guard row >= 0, row < rows.count else { return }
+        freezeOrder()
         switch rows[row] {
         case .tabs(let group):
             // One tab: close it. Several of one address: close the copies, keep the latest.
@@ -375,11 +380,18 @@ final class TabSwitcher: NSObject {
             }
         }
         // Latest looked at first; tabs never seen in front keep the browsers' own order after them.
-        let ranked = groups.enumerated().sorted { a, b in
+        var ranked = groups.enumerated().sorted { a, b in
             let (x, y) = (activity["\(a.element[0].browser.bundleId) \(a.element[0].url)"] ?? 0,
                           activity["\(b.element[0].browser.bundleId) \(b.element[0].url)"] ?? 0)
             return x != y ? x > y : a.offset < b.offset
         }.map(\.element)
+        if let frozen = frozenOrder {
+            // Frozen: rows keep their places; tabs opened meanwhile follow in their own order.
+            ranked = ranked.enumerated().sorted { a, b in
+                let (x, y) = (frozen[Self.groupKey(a.element)] ?? .max, frozen[Self.groupKey(b.element)] ?? .max)
+                return x != y ? x < y : a.offset < b.offset
+            }.map(\.element)
+        }
         var titled: [[BrowserTab]] = [], addressed: [[BrowserTab]] = [], paged: [[BrowserTab]] = []
         for group in ranked {
             let tab = group[0]
@@ -422,6 +434,20 @@ final class TabSwitcher: NSObject {
         header.stringValue = browsers.isEmpty && gone.isEmpty ? "No browser is open" : "Tabs"
         let keep = selectedKey.flatMap { key in rows.firstIndex { Self.key($0) == key } }
         select(keep ?? notices.count.clamped(to: rows.count))
+    }
+
+    private static func groupKey(_ group: [BrowserTab]) -> String {
+        "\(group[0].browser.bundleId) \(group[0].url)"
+    }
+
+    /// Keeps the current order of open tabs from here on (see `frozenOrder`).
+    private func freezeOrder() {
+        guard frozenOrder == nil else { return }
+        var order: [String: Int] = [:]
+        for row in rows {
+            if case .tabs(let group) = row { order[Self.groupKey(group)] = order.count }
+        }
+        frozenOrder = order
     }
 
     /// Identifies a row across reloads, so the selection stays on it.
@@ -491,6 +517,7 @@ final class TabSwitcher: NSObject {
         case .member(let tab): key = "tabs \(tab.browser.bundleId) \(tab.url)"
         default: return NSSound.beep()
         }
+        freezeOrder()
         if expanded.remove(key) == nil { expanded.insert(key) }
         reload()
         if let at = rows.firstIndex(where: { Self.key($0) == key }) { select(at) }
@@ -697,8 +724,10 @@ extension TabSwitcher: NSSearchFieldDelegate {
         if textView.hasMarkedText() { return false }
         switch selector {
         case #selector(NSResponder.moveUp(_:)):
+            freezeOrder()
             select(table.selectedRow - 1)
         case #selector(NSResponder.moveDown(_:)):
+            freezeOrder()
             select(table.selectedRow + 1)
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
