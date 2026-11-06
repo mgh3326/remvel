@@ -30,6 +30,10 @@ struct Snapshot {
 
     func run(popup: PopupController) {
         NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        if state == "tabs" {
+            renderTabs()
+            return
+        }
         Core.shared.run({ store in
             if store.count() == 0 { try Self.fill(store) }
         }) { result in
@@ -43,6 +47,32 @@ struct Snapshot {
                 try! rep.representation(using: .png, properties: [:])!.write(to: output)
                 NSApp.terminate(nil)
             }
+        }
+    }
+
+    private static let tabSwitcher = TabSwitcher()
+
+    private func renderTabs() {
+        let edge = Browser(bundleId: "com.microsoft.edgemac", name: "Microsoft Edge", safari: false)
+        let whale = Browser(bundleId: "com.naver.Whale", name: "NAVER Whale", safari: false)
+        let safari = Browser(bundleId: "com.apple.Safari", name: "Safari", safari: true)
+        let samples: [(Browser, String, String)] = [
+            (edge, "Pull requests · mgh3326/remvel", "https://github.com/mgh3326/remvel/pulls"),
+            (edge, "Galaxy admin — metadata requests", "https://www.example.com/admin/galaxy/metadata_requests/59302"),
+            (edge, "Linear — Inbox", "https://linear.app/inbox"),
+            (whale, "네이버 지도", "https://map.naver.com/"),
+            (whale, "Rust 표준 라이브러리 문서", "https://doc.rust-lang.org/std/"),
+            (safari, "Apple Developer Documentation", "https://developer.apple.com/documentation/appkit"),
+            (safari, "Hacker News", "https://news.ycombinator.com/"),
+        ]
+        let tabs = samples.enumerated().map { index, sample in
+            BrowserTab(browser: sample.0, windowId: 1, tabId: index + 1, title: sample.1, url: sample.2, active: index == 0)
+        }
+        Self.tabSwitcher.prepareSnapshot(tabs, query: "") { view in
+            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try! rep.representation(using: .png, properties: [:])!.write(to: output)
+            NSApp.terminate(nil)
         }
     }
 

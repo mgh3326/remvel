@@ -98,6 +98,10 @@ final class PopupController: NSObject {
 
     /// Screen frame of the menu bar icon, for `PopupPosition.statusItem`.
     var statusItemFrame: (() -> NSRect?)?
+    /// ⇥: open the tab switcher in the popup's place with this search text.
+    var onHop: ((String, NSPoint) -> Void)?
+    var isVisible: Bool { panel.isVisible }
+    var topLeft: NSPoint { NSPoint(x: panel.frame.minX, y: panel.frame.maxY) }
 
     private let model = HistoryModel()
     private let preview = PreviewController()
@@ -186,8 +190,10 @@ final class PopupController: NSObject {
     }
 
     /// Opens the popup with `query` already typed, or brings it forward with that query.
-    func show(query: String) {
+    /// `topLeft` puts it where the tab switcher was, so hopping between them keeps one place.
+    func show(query: String, at topLeft: NSPoint? = nil) {
         if !panel.isVisible { open() }
+        if let topLeft { panel.setFrameTopLeftPoint(topLeft) }
         searchField.stringValue = query
         model.setQuery(query)
         NSApp.activate(ignoringOtherApps: false)
@@ -280,7 +286,7 @@ final class PopupController: NSObject {
         panel.contentMaxSize = size
     }
 
-    private func origin(for size: NSSize) -> NSPoint {
+    func origin(for size: NSSize) -> NSPoint {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return .zero }
@@ -530,7 +536,7 @@ final class PopupController: NSObject {
         footerLine.boxType = .separator
 
         footer.lineBreakMode = .byTruncatingTail
-        settingsHint.attributedStringValue = Self.hints([("Settings", "⌘,")])
+        settingsHint.attributedStringValue = Self.hints([("Tabs", "⇥"), ("Settings", "⌘,")])
 
         for label in [footer, listHeader, listCount, settingsHint] {
             // Labels truncate; they must never widen the panel.
@@ -822,7 +828,7 @@ final class PopupController: NSObject {
     }
 
     /// "⏎ Paste   ⇧⏎ Plain text": keys in label colour, actions secondary.
-    private static func hints(_ pairs: [(label: String, key: String)]) -> NSAttributedString {
+    static func hints(_ pairs: [(label: String, key: String)]) -> NSAttributedString {
         let text = NSMutableAttributedString()
         let size = NSFont.smallSystemFontSize
         for (index, pair) in pairs.enumerated() {
@@ -1103,6 +1109,10 @@ extension PopupController: NSSearchFieldDelegate {
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             pasteSelected(mode: flags.contains(.option) ? .copyOnly : flags.contains(.shift) ? .plainText : .original)
+        case #selector(NSResponder.insertTab(_:)):
+            let query = searchField.stringValue, topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+            close()
+            onHop?(query, topLeft)
         case #selector(NSResponder.deleteWordBackward(_:)) where NSApp.currentEvent?.modifierFlags.contains(.option) == true:
             // ⌥⌫ deletes the selected item, as in Maccy.
             delete(row: table.selectedRow)

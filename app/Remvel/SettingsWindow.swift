@@ -38,6 +38,13 @@ private struct SettingsView: View {
                     ShortcutRecorder(combo: $settings.hotkey)
                         .frame(width: 120, height: 24)
                 }
+                LabeledContent {
+                    ShortcutRecorder(combo: $settings.tabsHotkey)
+                        .frame(width: 120, height: 24)
+                } label: {
+                    Text("Search browser tabs")
+                    Text("Safari and Chromium browsers (Edge, Chrome, Whale, Arc…). ⇥ in either window switches to the other.")
+                }
                 Picker("Show popup", selection: $settings.popupPosition) {
                     ForEach(PopupPosition.allCases) { Text($0.label).tag($0) }
                 }

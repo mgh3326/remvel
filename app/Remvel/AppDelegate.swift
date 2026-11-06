@@ -5,9 +5,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let watcher = PasteboardWatcher()
     private let settings = Settings.shared
     private lazy var popup = PopupController()
+    private lazy var tabs = TabSwitcher()
     private var hotkey: Hotkey?
+    private var tabsHotkey: Hotkey?
     private var statusItem: NSStatusItem?
     private var openItem: NSMenuItem?
+    private var tabsItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
     private var updateItem: NSMenuItem?
     private var subscriptions: Set<AnyCancellable> = []
@@ -33,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openItem?.title = ok ? "Open Remvel  \(combo.label)" : "Open Remvel  (\(combo.label) is taken)"
             if !ok { Self.warnShortcutTaken(combo) }
         }.store(in: &subscriptions)
+        tabsHotkey = Hotkey { [weak self] in self?.toggleTabs() }
+        settings.$tabsHotkey.sink { [weak self] combo in
+            let ok = self?.tabsHotkey?.register(combo) ?? false
+            self?.tabsItem?.title = ok ? "Browser Tabs  \(combo.label)" : "Browser Tabs  (\(combo.label) is taken)"
+        }.store(in: &subscriptions)
         settings.$windowShortcuts.sink { WindowMover.shared.setEnabled($0) }.store(in: &subscriptions)
         settings.$showInDock.sink { show in
             NSApp.setActivationPolicy(show ? .regular : .accessory)
@@ -43,7 +51,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }.store(in: &subscriptions)
         SettingsWindow.shared.onHotkeyRecording = { [weak self] recording in
             self?.hotkey?.register(recording ? nil : self?.settings.hotkey)
+            self?.tabsHotkey?.register(recording ? nil : self?.settings.tabsHotkey)
         }
+        popup.onHop = { [weak self] query, topLeft in self?.tabs.show(query: query, at: topLeft) }
+        tabs.onHop = { [weak self] query in
+            guard let self else { return }
+            popup.show(query: query, at: tabs.topLeft)
+        }
+        tabs.placement = { [weak self] size in self?.popup.origin(for: size) ?? .zero }
 
         popup.statusItemFrame = { [weak self] in
             guard let button = self?.statusItem?.button, let window = button.window else { return nil }
@@ -111,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         openItem = menu.addItem(withTitle: "Open Remvel", action: #selector(togglePopup), keyEquivalent: "")
+        tabsItem = menu.addItem(withTitle: "Browser Tabs", action: #selector(toggleTabs), keyEquivalent: "")
         pauseItem = menu.addItem(withTitle: "Pause Recording", action: #selector(togglePause), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
@@ -129,8 +145,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popup.show(query: query)
     }
 
+    /// Either shortcut swaps an open popup or switcher for the other, in the same place.
     @objc private func togglePopup() {
-        popup.toggle()
+        if tabs.isVisible {
+            tabs.close()
+            popup.show(query: "", at: tabs.topLeft)
+        } else {
+            popup.toggle()
+        }
+    }
+
+    @objc private func toggleTabs() {
+        if popup.isVisible {
+            let topLeft = popup.topLeft
+            popup.toggle()
+            tabs.show(at: topLeft)
+        } else {
+            tabs.toggle()
+        }
     }
 
     @objc private func togglePause() {

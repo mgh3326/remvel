@@ -24,6 +24,7 @@ targets:
       path: Remvel/Info.plist
       properties:
         LSUIElement: true
+        NSAppleEventsUsageDescription: Remvel reads the titles and addresses of your open browser tabs so you can search them and go to one.
         CFBundleDisplayName: Remvel
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

@@ -22,5 +22,7 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Remvel reads the titles and addresses of your open browser tabs so you can search them and go to one.</string>
 </dict>
 </plist>

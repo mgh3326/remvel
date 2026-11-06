@@ -58,6 +58,8 @@ struct KeyCombo: Codable, Equatable {
 
     /// ⇧⌘C, the shortcut Maccy users already know.
     static let `default` = KeyCombo(carbonKeyCode: kVK_ANSI_C, carbonModifiers: shiftKey | cmdKey, key: "C")
+    /// ⌃⌥B for browser tabs; ⌃⌥Space is macOS's "next input source".
+    static let tabs = KeyCombo(carbonKeyCode: kVK_ANSI_B, carbonModifiers: controlKey | optionKey, key: "B")
 
     var label: String {
         var text = ""
@@ -128,6 +130,10 @@ final class Settings: ObservableObject {
     @Published var hotkey: KeyCombo {
         didSet { defaults.set(try? JSONEncoder().encode(hotkey), forKey: "hotkey") }
     }
+    /// Opens the switcher over every browser's open tabs.
+    @Published var tabsHotkey: KeyCombo {
+        didSet { defaults.set(try? JSONEncoder().encode(tabsHotkey), forKey: "tabsHotkey") }
+    }
     var hasOnboarded: Bool {
         get { defaults.bool(forKey: "hasOnboarded") }
         set { defaults.set(newValue, forKey: "hasOnboarded") }
@@ -148,5 +154,7 @@ final class Settings: ObservableObject {
         windowShortcuts = defaults.bool(forKey: "windowShortcuts")
         hotkey = defaults.data(forKey: "hotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
             ?? .default
+        tabsHotkey = defaults.data(forKey: "tabsHotkey").flatMap { try? JSONDecoder().decode(KeyCombo.self, from: $0) }
+            ?? .tabs
     }
 }
