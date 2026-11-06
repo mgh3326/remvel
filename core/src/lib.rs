@@ -14,7 +14,7 @@ pub use ffi::{Remvel, file_paths_uti};
 pub use kind::Kind;
 pub use search::{Filter, SearchHit, SearchMode};
 pub use store::{Capture, Facet, Facets, IngestResult, ItemSummary, KindFacet, Rep, Store, UTI_FILE_PATHS, pin_value};
-pub use tabs::{ClosedTab, TabSeen};
+pub use tabs::{ClosedTab, TabKey, TabSeen};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 #[uniffi(flat_error)]

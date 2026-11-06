@@ -176,6 +176,7 @@ final class PreviewController: NSObject {
             urlLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
             urlLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
             urlLabel.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12),
+            urlLabel.bottomAnchor.constraint(lessThanOrEqualTo: ocrLine.topAnchor, constant: -8),
 
             fileView.topAnchor.constraint(equalTo: content.topAnchor, constant: 1),
             fileView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 1),
@@ -264,6 +265,11 @@ final class PreviewController: NSObject {
             textScroll.isHidden = false
             textView.string = title.isEmpty ? address : "\(title)\n\n\(address)"
         }
+    }
+
+    /// Text kept from a tab's page, under its card, with the search words marked; nil hides it.
+    func showPageText(_ text: String?) {
+        showRecognizedText(text?.isEmpty == false ? text : nil)
     }
 
     private func loadLink(_ id: Int64) {

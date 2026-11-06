@@ -90,7 +90,7 @@ private struct SettingsView: View {
             } header: {
                 Text("Browser tabs")
             } footer: {
-                Text("A browser's tabs are read when you switch away from it, at most every two minutes, and stored only on this Mac. Closed tabs show below the open ones in the tab list; ⏎ opens one again. Safari gives page text as is; Chromium browsers (Edge, Chrome, Whale…) give it once View › Developer › Allow JavaScript from Apple Events is on.")
+                Text("A browser's tabs are read as you use it (when its window title changes or you switch away, at most every ten seconds) and stored only on this Mac. Closed tabs show below the open ones in the tab list; ⏎ opens one again. Safari gives page text as is; Chromium browsers (Edge, Chrome, Whale…) give it once View › Developer › Allow JavaScript from Apple Events is on.")
                     .foregroundStyle(.secondary)
             }
             Section {

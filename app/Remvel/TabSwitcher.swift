@@ -8,12 +8,14 @@ private final class TabPanel: NSPanel {
     /// Remvel has no Edit menu to route these, so the search field gets them here.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // By key code, as on a US layout: with Korean input ⌘A arrives as "ㅁ" and would be typed.
         if flags == .command, let editor = firstResponder as? NSTextView {
-            switch event.charactersIgnoringModifiers {
-            case "a": editor.selectAll(nil); return true
-            case "x": editor.cut(nil); return true
-            case "c": editor.copy(nil); return true
-            case "v": editor.paste(nil); return true
+            switch event.keyCode {
+            case 0: editor.selectAll(nil); return true
+            case 7: editor.cut(nil); return true
+            case 8: editor.copy(nil); return true
+            case 9: editor.paste(nil); return true
+            case 6: editor.undoManager?.undo(); return true
             default: break
             }
         }
@@ -81,6 +83,8 @@ final class TabSwitcher: NSObject {
     private var reading: Set<String> = []
     private var rows: [Row] = []
     private var closed: [ClosedTab] = []
+    /// Open tabs ("bundle id URL") whose kept page text matches the search text.
+    private var inPage: Set<String> = []
     private var closedGeneration = 0
 
     private static let relative: RelativeDateTimeFormatter = {
@@ -105,7 +109,7 @@ final class TabSwitcher: NSObject {
         }
         if !panel.isVisible { refresh() }
         reload()
-        loadClosed()
+        loadRemembered()
         NSApp.activate(ignoringOtherApps: false)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(searchField)
@@ -128,7 +132,7 @@ final class TabSwitcher: NSObject {
         self.tabs = Dictionary(grouping: tabs, by: \.browser.bundleId)
         searchField.stringValue = query
         reload()
-        loadClosed()
+        loadRemembered()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { then(self.panel.contentView!) }
     }
 
@@ -161,7 +165,7 @@ final class TabSwitcher: NSObject {
                     }
                     reload()
                     // Tabs closed since the last read are known once every browser has answered.
-                    if reading.isEmpty { loadClosed() }
+                    if reading.isEmpty { loadRemembered() }
                 }
             }
         }
@@ -211,6 +215,7 @@ final class TabSwitcher: NSObject {
             let closedAt = Date(unixMillis: gone.closedAt)
             preview.show(page: gone.url, title: gone.title, kind: Browser.named(gone.browser).name,
                          meta: "Closed \(Self.relative.localizedString(for: closedAt, relativeTo: Date()))")
+            loadPageText(browser: gone.browser, url: gone.url)
             return
         case .browser:
             preview.show(nil, force: true)
@@ -220,6 +225,16 @@ final class TabSwitcher: NSObject {
         let count = tabs[tab.browser.bundleId]?.count ?? 0
         preview.show(page: tab.url, title: tab.title, kind: tab.browser.name,
                      meta: "\(count) tabs" + (windows > 1 ? " in \(windows) windows" : "") + (tab.active ? " · showing" : ""))
+        loadPageText(browser: tab.browser.bundleId, url: tab.url)
+    }
+
+    /// The page text kept for the previewed tab, under its card, if the selection has not moved on.
+    private func loadPageText(browser: String, url: String) {
+        let row = table.selectedRow
+        Core.shared.run({ try $0.tabText(browser: browser, url: url) }) { [weak self] result in
+            guard let self, table.selectedRow == row, case .success(let text) = result else { return }
+            preview.showPageText(text)
+        }
     }
 
     /// ⌥⌫: closes the selected tab where it is, without leaving Remvel; it stays findable as closed.
@@ -234,7 +249,7 @@ final class TabSwitcher: NSObject {
             queue.async {
                 if Tabs.close(tab) {
                     Core.shared.perform("tab closed", { try $0.tabClosed(browser: tab.browser.bundleId, url: tab.url, at: now) },
-                                        then: { [weak self] in self?.loadClosed() })
+                                        then: { [weak self] in self?.loadRemembered() })
                 } else {
                     DispatchQueue.main.async { NSSound.beep() }
                 }
@@ -249,16 +264,21 @@ final class TabSwitcher: NSObject {
         select(row)
     }
 
-    /// Closed tabs for the search text, from the core; they follow the open ones.
-    private func loadClosed() {
+    /// What the core remembers for the search text: closed tabs, and open tabs only their page
+    /// text matches. Both follow the open tabs whose title or address matches.
+    private func loadRemembered() {
         closedGeneration += 1
         let generation = closedGeneration
         let text = searchField.stringValue.split(separator: " ").filter { !$0.hasPrefix("@") }.joined(separator: " ")
+        preview.searchWords = text.split(separator: " ").map(String.init).filter { $0.count >= 2 }
         // Browsing shows the latest few; a search looks through all of them.
         let limit: Int64 = text.isEmpty ? 30 : 300
-        Core.shared.run({ try $0.closedTabs(query: text, limit: limit) }) { [weak self] result in
-            guard let self, generation == closedGeneration, case .success(let found) = result else { return }
+        Core.shared.run({ store in
+            (try store.closedTabs(query: text, limit: limit), try store.openTabsWithText(query: text, limit: 300))
+        }) { [weak self] result in
+            guard let self, generation == closedGeneration, case .success(let (found, pages)) = result else { return }
             closed = found
+            inPage = Set(pages.map { "\($0.browser) \($0.url)" })
             reload()
         }
     }
@@ -274,14 +294,17 @@ final class TabSwitcher: NSObject {
             let name = browser.name.lowercased().replacingOccurrences(of: " ", with: "")
             return named.allSatisfy { name.hasPrefix($0) || name.contains($0) }
         }
-        var titled: [Row] = [], addressed: [Row] = [], notices: [Row] = []
+        var titled: [Row] = [], addressed: [Row] = [], paged: [Row] = [], notices: [Row] = []
         for browser in shown {
             if let state = status[browser.bundleId], tabs[browser.bundleId] == nil || state != .silent {
                 notices.append(.browser(browser, state))
             }
             for tab in tabs[browser.bundleId] ?? [] {
                 let title = tab.title.lowercased(), url = tab.url.lowercased()
-                guard text.allSatisfy({ title.contains($0) || url.contains($0) }) else { continue }
+                guard text.allSatisfy({ title.contains($0) || url.contains($0) }) else {
+                    if !text.isEmpty, inPage.contains("\(tab.browser.bundleId) \(tab.url)") { paged.append(.tab(tab)) }
+                    continue
+                }
                 // Matches in the title come first: the address of many tabs holds a common word.
                 if text.isEmpty || text.allSatisfy(title.contains) {
                     titled.append(.tab(tab))
@@ -296,9 +319,9 @@ final class TabSwitcher: NSObject {
             let name = Browser.named(tab.browser).name.lowercased().replacingOccurrences(of: " ", with: "")
             return named.allSatisfy { name.contains($0) }
         }.map(Row.closed)
-        rows = notices + titled + addressed + gone
+        rows = notices + titled + addressed + paged + gone
         table.reloadData()
-        let tabCount = titled.count + addressed.count
+        let tabCount = titled.count + addressed.count + paged.count
         count.stringValue = reading.isEmpty
             ? "\(tabCount.formatted()) tabs" + (gone.isEmpty ? "" : " · \(gone.count.formatted()) closed")
             : "Reading \(reading.count) browsers…"
@@ -524,7 +547,7 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
 extension TabSwitcher: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         reload()
-        loadClosed()
+        loadRemembered()
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -551,7 +574,7 @@ extension TabSwitcher: NSSearchFieldDelegate {
             } else {
                 searchField.stringValue = ""
                 reload()
-                loadClosed()
+                loadRemembered()
             }
         default:
             return false

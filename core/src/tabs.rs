@@ -20,6 +20,13 @@ pub struct TabSeen {
     pub title: String,
 }
 
+/// An open tab, by the browser's bundle identifier and the tab's address.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabKey {
+    pub browser: String,
+    pub url: String,
+}
+
 /// A tab that is no longer open, newest closed first.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ClosedTab {
@@ -121,6 +128,26 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Open tabs whose kept page text holds every word of `query`, ignoring case. The app matches
+    /// titles and addresses itself; this finds the tabs only their page mentions.
+    pub fn open_tabs_with_text(&self, query: &str, limit: i64) -> Result<Vec<TabKey>> {
+        let words: Vec<String> = query.split_whitespace().map(|w| format!("%{}%", escape_like(w))).collect();
+        if words.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut sql = String::from("SELECT browser, url FROM tabs WHERE closed_at IS NULL AND text IS NOT NULL");
+        for n in 1..=words.len() {
+            sql += &format!(" AND text LIKE ?{n} ESCAPE '\\'");
+        }
+        sql += &format!(" ORDER BY last_seen DESC, id DESC LIMIT {}", limit.max(0));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows =
+            stmt.query_map(params_from_iter(words.iter()), |r| Ok(TabKey { browser: r.get(0)?, url: r.get(1)? }))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+}
+
 fn escape_like(word: &str) -> String {
     word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
@@ -181,6 +208,12 @@ mod tests {
         assert_eq!(closed(&store, "remvel checklist")[0].0, "Docs");
         assert_eq!(closed(&store, "100%_").len(), 1);
         assert!(closed(&store, "100%x").is_empty());
+        // Open tabs are found by their page text alone; titles and addresses are the app's to match.
+        store.record_tabs(safari, &[tab("https://docs.example/100%_done", "Docs")], 4).unwrap();
+        let keys = store.open_tabs_with_text("CHECKLIST", 10).unwrap();
+        assert_eq!(keys, [TabKey { browser: safari.into(), url: "https://docs.example/100%_done".into() }]);
+        assert!(store.open_tabs_with_text("docs", 10).unwrap().is_empty());
+        assert!(store.open_tabs_with_text("", 10).unwrap().is_empty());
         store.forget_tab(safari, "https://shop.example/cart").unwrap();
         assert!(closed(&store, "장바구니").is_empty());
     }

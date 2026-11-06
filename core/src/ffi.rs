@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::{
-    Capture, ClosedTab, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, TabSeen,
+    Capture, ClosedTab, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, TabKey, TabSeen,
     UTI_FILE_PATHS,
 };
 
@@ -138,6 +138,11 @@ impl Remvel {
 
     pub fn tab_text(&self, browser: String, url: String) -> Result<Option<String>> {
         self.store().tab_text(&browser, &url)
+    }
+
+    /// Open tabs whose kept page text holds every word of `query`.
+    pub fn open_tabs_with_text(&self, query: String, limit: i64) -> Result<Vec<TabKey>> {
+        self.store().open_tabs_with_text(&query, limit)
     }
 
     /// Closed tabs matching every word of `query` in title, address or page text, newest closed first.
