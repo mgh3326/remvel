@@ -30,7 +30,7 @@ struct Snapshot {
 
     func run(popup: PopupController) {
         NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        if state == "tabs" || state == "tabsearch" {
+        if state == "tabs" || state == "tabsearch" || state == "tabaddress" {
             renderTabs()
             return
         }
@@ -89,7 +89,7 @@ struct Snapshot {
                       lastVisit: now - 60_000, visitCount: 1),
             ], now: now)
         }) { _ in
-            Self.tabSwitcher.prepareSnapshot(tabs, query: state == "tabsearch" ? "rust" : "") { view in
+            Self.tabSwitcher.prepareSnapshot(tabs, query: state == "tabsearch" ? "rust" : state == "tabaddress" ? "rust-lang.org" : "") { view in
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
                 view.cacheDisplay(in: view.bounds, to: rep)
                 try! rep.representation(using: .png, properties: [:])!.write(to: output)

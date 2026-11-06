@@ -64,6 +64,8 @@ final class TabSwitcher: NSObject {
         case visited([Visit])
         /// "Closed", "History": where the open tabs end and remembered pages begin.
         case header(String)
+        /// The search text is an address no open tab shows: ⏎ opens it, as an address bar would.
+        case address(URL, Browser?)
         /// A browser whose tabs need permission first, or that did not answer.
         case browser(Browser, Status)
     }
@@ -106,6 +108,8 @@ final class TabSwitcher: NSObject {
     /// Open tabs ("bundle id URL") whose kept page text matches the search text.
     private var inPage: Set<String> = []
     private var closedGeneration = 0
+    /// The browser in front when the list opened: where a typed address opens.
+    private var frontBrowser: Browser?
     /// Words of the search text, marked where they occur in each row.
     private var searchWords: [String] {
         searchField.stringValue.lowercased().split(separator: " ").filter { !$0.hasPrefix("@") }.map(String.init)
@@ -177,6 +181,10 @@ final class TabSwitcher: NSObject {
     /// Reads every running browser at once; each one's tabs appear as soon as it answers.
     private func refresh() {
         let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        frontBrowser = nil
+        if let front, let app = NSWorkspace.shared.frontmostApplication, Browser.isBrowser(app) {
+            frontBrowser = Browser.named(front)
+        }
         browsers = Browser.running().sorted { ($0.bundleId == front ? 0 : 1) < ($1.bundleId == front ? 0 : 1) }
         let running = Set(browsers.map(\.bundleId))
         tabs = tabs.filter { running.contains($0.key) }
@@ -270,6 +278,9 @@ final class TabSwitcher: NSObject {
                          meta: "Visited \(when)" + (count > 1 ? " · \(count) visits" : "")
                              + (visits.count > 1 ? " · \(visits.count) addresses" : ""))
             return
+        case .address(let url, let browser):
+            preview.show(page: url.absoluteString, title: "", kind: browser?.name ?? "", meta: "Opens in a new tab")
+            return
         case .browser, .header:
             preview.show(nil, force: true)
             return
@@ -311,7 +322,7 @@ final class TabSwitcher: NSObject {
             Core.shared.perform("forget visits") { store in
                 for visit in visits { try store.forgetVisit(browser: visit.browser, url: visit.url) }
             }
-        case .browser, .header:
+        case .browser, .header, .address:
             return NSSound.beep()
         }
         reload()
@@ -403,9 +414,16 @@ final class TabSwitcher: NSObject {
                 return x != y ? x < y : a.offset < b.offset
             }.map(\.element)
         }
+        // A typed address ("naver.com"): the tabs showing exactly that page lead, then that host's home.
+        let typed = Self.typedAddress(text.joined(separator: " "))
+        var exact: [[BrowserTab]] = []
         var titled: [[BrowserTab]] = [], addressed: [[BrowserTab]] = [], paged: [[BrowserTab]] = []
         for group in ranked {
             let tab = group[0]
+            if let typed, Self.page(tab.url) == Self.page(typed.absoluteString) {
+                exact.append(group)
+                continue
+            }
             let title = tab.title.lowercased(), url = tab.url.lowercased()
             guard text.allSatisfy({ title.contains($0) || url.contains($0) }) else {
                 if !text.isEmpty, inPage.contains("\(tab.browser.bundleId) \(tab.url)") { paged.append(group) }
@@ -418,7 +436,13 @@ final class TabSwitcher: NSObject {
                 addressed.append(group)
             }
         }
-        let openRows: [Row] = (titled + addressed + paged).flatMap { group -> [Row] in
+        // Nothing open shows it: offer to open it, in the browser the user came from.
+        // Otherwise the browser of the tab looked at last.
+        let lastUsed = activity.max { $0.value < $1.value }.flatMap { entry in
+            browsers.first { entry.key.hasPrefix($0.bundleId + " ") }
+        }
+        let offer: [Row] = typed != nil && exact.isEmpty ? [.address(typed!, frontBrowser ?? lastUsed ?? browsers.first)] : []
+        let openRows: [Row] = offer + (exact + titled + addressed + paged).flatMap { group -> [Row] in
             let row = Row.tabs(group)
             return expanded.contains(Self.key(row)) && group.count > 1 ? [row] + group.map(Row.member) : [row]
         }
@@ -449,7 +473,7 @@ final class TabSwitcher: NSObject {
             + (gone.isEmpty ? [] : (sections ? [.header("Closed")] : []) + gone)
             + (history.isEmpty ? [] : (sections ? [.header("History")] : []) + history)
         table.reloadData()
-        let tabCount = (titled + addressed + paged).reduce(0) { $0 + $1.count }
+        let tabCount = (exact + titled + addressed + paged).reduce(0) { $0 + $1.count }
         count.stringValue = reading.isEmpty
             ? (tabCount == 1 ? "1 tab" : "\(tabCount.formatted()) tabs") + (gone.isEmpty ? "" : " · \(gone.count.formatted()) closed")
                 + (history.isEmpty ? "" : " · \(history.count.formatted()) visited")
@@ -457,6 +481,17 @@ final class TabSwitcher: NSObject {
         header.stringValue = browsers.isEmpty && gone.isEmpty ? "No browser is open" : "Tabs"
         let keep = selectedKey.flatMap { key in rows.firstIndex { Self.key($0) == key } }
         select(keep ?? notices.count.clamped(to: rows.count))
+    }
+
+    /// The search text as a web address when it reads like one: "naver.com", "github.com/mgh3326",
+    /// "https://…". Words with spaces, or without a dot in the host, are a search instead.
+    static func typedAddress(_ text: String) -> URL? {
+        let text = text.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty, !text.contains(" ") else { return nil }
+        let full = text.contains("://") ? text : "https://" + text
+        guard let url = URL(string: full), let host = url.host, host.contains("."),
+              !host.hasSuffix("."), url.scheme == "https" || url.scheme == "http" else { return nil }
+        return url
     }
 
     /// Host and path, the query and fragment left out: what identifies a page in a list.
@@ -505,6 +540,7 @@ final class TabSwitcher: NSObject {
         case .closed(let tab): "closed \(tab.browser) \(tab.url)"
         case .visited(let visits): "visited \(visits[0].browser) \(page(visits[0].url))"
         case .header(let title): "header \(title)"
+        case .address(let url, _): "address \(url.absoluteString)"
         case .browser(let browser, _): "browser \(browser.bundleId)"
         }
     }
@@ -539,6 +575,7 @@ final class TabSwitcher: NSObject {
                 hints.append(("Open again", "⏎"))
                 hints.append(("Forget", "⌥⌫"))
             case .header: break
+            case .address(_, let browser): hints.append((browser.map { "Open in \($0.name)" } ?? "Open", "⏎"))
             case .browser(_, .notAsked): hints.append(("Allow", "⏎"))
             case .browser(_, .denied): hints.append(("Open Privacy settings", "⏎"))
             case .browser(_, .silent): break
@@ -588,6 +625,8 @@ final class TabSwitcher: NSObject {
             reopen(visits[0].url, in: visits[0].browser)
         case .header:
             return
+        case .address(let url, let browser):
+            reopen(url.absoluteString, in: browser?.bundleId ?? "")
         case .browser(let browser, .notAsked):
             ask(browser)
         case .browser(_, .denied):
@@ -757,6 +796,9 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
         cell.time = ""
         switch rows[row] {
         case .header: break
+        case .address(let url, let browser):
+            cell.imageView?.image = browser.flatMap(Self.icon) ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+            cell.set(title: "Open \(Self.page(url.absoluteString))", detail: browser.map { "in \($0.name)" } ?? "")
         case .tabs(let group):
             let tab = group[0]
             cell.imageView?.image = Self.icon(tab.browser)
