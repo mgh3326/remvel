@@ -20,6 +20,16 @@ const MAX_TEXT_CHARS: usize = 100_000;
 pub struct TabSeen {
     pub url: String,
     pub title: String,
+    /// The tab the user is looking at now: its `last_active` becomes the time of the read.
+    pub active: bool,
+}
+
+/// When an open tab was last the one the user looked at, as far as Remvel saw.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabActivity {
+    pub browser: String,
+    pub url: String,
+    pub last_active: i64,
 }
 
 /// An open tab, by the browser's bundle identifier and the tab's address.
@@ -50,14 +60,16 @@ impl Store {
         let tx = self.conn.transaction()?;
         {
             let mut upsert = tx.prepare_cached(
-                "INSERT INTO tabs (browser, url, title, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)
+                "INSERT INTO tabs (browser, url, title, first_seen, last_seen, last_active)
+                 VALUES (?1, ?2, ?3, ?4, ?4, CASE WHEN ?5 THEN ?4 END)
                  ON CONFLICT (browser, url) DO UPDATE SET
                      title = CASE WHEN excluded.title = '' THEN title ELSE excluded.title END,
                      last_seen = excluded.last_seen,
+                     last_active = coalesce(excluded.last_active, last_active),
                      closed_at = NULL",
             )?;
             for tab in tabs.iter().filter(|t| worth_keeping(&t.url)) {
-                upsert.execute(params![browser, tab.url, tab.title, at])?;
+                upsert.execute(params![browser, tab.url, tab.title, at, tab.active])?;
             }
         }
         tx.execute(
@@ -72,6 +84,16 @@ impl Store {
         tx.execute("DELETE FROM tabs WHERE closed_at < ?1", [at - MAX_CLOSED_AGE_MS])?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Open tabs with the time each was last looked at, for listing the latest first.
+    pub fn tab_activity(&self) -> Result<Vec<TabActivity>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT browser, url, last_active FROM tabs WHERE closed_at IS NULL AND last_active IS NOT NULL",
+        )?;
+        let rows =
+            stmt.query_map([], |r| Ok(TabActivity { browser: r.get(0)?, url: r.get(1)?, last_active: r.get(2)? }))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     /// For a tab closed from Remvel: it is closed now, without waiting for the next read.
@@ -160,7 +182,24 @@ mod tests {
     use super::*;
 
     fn tab(url: &str, title: &str) -> TabSeen {
-        TabSeen { url: url.into(), title: title.into() }
+        TabSeen { url: url.into(), title: title.into(), active: false }
+    }
+
+    #[test]
+    fn the_active_tab_keeps_the_time_it_was_last_looked_at() {
+        let mut store = Store::open_in_memory().unwrap();
+        let edge = "com.microsoft.edgemac";
+        let a = |active| TabSeen { active, ..tab("https://a.example/", "A") };
+        let b = |active| TabSeen { active, ..tab("https://b.example/", "B") };
+        store.record_tabs(edge, &[a(true), b(false)], 10).unwrap();
+        store.record_tabs(edge, &[a(false), b(true)], 20).unwrap();
+        store.record_tabs(edge, &[a(false), b(false)], 30).unwrap();
+        let mut seen: Vec<(String, i64)> =
+            store.tab_activity().unwrap().into_iter().map(|t| (t.url, t.last_active)).collect();
+        seen.sort();
+        assert_eq!(seen, [("https://a.example/".to_string(), 10), ("https://b.example/".to_string(), 20)]);
+        store.record_tabs(edge, &[b(false)], 40).unwrap();
+        assert_eq!(store.tab_activity().unwrap().len(), 1, "closed tabs drop out");
     }
 
     fn closed(store: &Store, query: &str) -> Vec<(String, i64)> {

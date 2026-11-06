@@ -86,6 +86,8 @@ const MIGRATIONS: &[&str] = &[
          UNIQUE (browser, url)
      );
      CREATE INDEX history_recent ON history(last_visit DESC, id DESC);",
+    // 7: when each tab was last the one shown, for listing tabs latest first (tabs.rs).
+    "ALTER TABLE tabs ADD COLUMN last_active INTEGER;",
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {

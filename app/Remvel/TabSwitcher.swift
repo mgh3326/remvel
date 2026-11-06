@@ -42,7 +42,10 @@ final class TabSwitcher: NSObject {
     var topLeft: NSPoint { NSPoint(x: panel.frame.minX, y: panel.frame.maxY) }
 
     private enum Row {
-        case tab(BrowserTab)
+        /// Open tabs of one address in one browser, latest seen first; ⏎ goes to the first.
+        case tabs([BrowserTab])
+        /// One of those tabs, listed under its row after ⌥⏎ to pick which to go to.
+        case member(BrowserTab)
         /// Remembered by `TabMemory` and no longer open; ⏎ opens it again.
         case closed(ClosedTab)
         /// A page from the browsers' history, while searching.
@@ -89,6 +92,10 @@ final class TabSwitcher: NSObject {
     /// Open tabs ("bundle id URL") whose kept page text matches the search text.
     private var inPage: Set<String> = []
     private var closedGeneration = 0
+    /// When each open tab ("bundle id URL") was last the one shown, newest first in the list.
+    private var activity: [String: Int64] = [:]
+    /// Rows opened with ⌥⏎ to show each of their tabs.
+    private var expanded: Set<String> = []
 
     private static let relative: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -111,6 +118,7 @@ final class TabSwitcher: NSObject {
             panel.setFrameOrigin(origin)
         }
         if !panel.isVisible {
+            expanded = []
             refresh()
             HistoryImport.shared.run()
         }
@@ -167,7 +175,12 @@ final class TabSwitcher: NSObject {
                     status[browser.bundleId] = result.0
                     if let read = result.1 {
                         tabs[browser.bundleId] = read
-                        TabMemory.shared.record(browser, read)
+                        let isFront = browser.bundleId == front
+                        TabMemory.shared.record(browser, read, front: isFront)
+                        // The tab the user just left leads the list at once, before the core answers.
+                        if isFront, let shown = TabMemory.frontTab(read) {
+                            activity["\(browser.bundleId) \(shown.url)"] = Date().unixMillis
+                        }
                     }
                     reload()
                     // Tabs closed since the last read are known once every browser has answered.
@@ -215,8 +228,12 @@ final class TabSwitcher: NSObject {
             return
         }
         let tab: BrowserTab
+        var others = 0
         switch rows[table.selectedRow] {
-        case .tab(let open): tab = open
+        case .tabs(let group):
+            tab = group[0]
+            others = group.count - 1
+        case .member(let open): tab = open
         case .closed(let gone):
             let closedAt = Date(unixMillis: gone.closedAt)
             preview.show(page: gone.url, title: gone.title, kind: Browser.named(gone.browser).name,
@@ -235,7 +252,8 @@ final class TabSwitcher: NSObject {
         let windows = Set((tabs[tab.browser.bundleId] ?? []).map(\.windowId)).count
         let count = tabs[tab.browser.bundleId]?.count ?? 0
         preview.show(page: tab.url, title: tab.title, kind: tab.browser.name,
-                     meta: "\(count) tabs" + (windows > 1 ? " in \(windows) windows" : "") + (tab.active ? " · showing" : ""))
+                     meta: "\(count) tabs" + (windows > 1 ? " in \(windows) windows" : "") + (tab.active ? " · showing" : "")
+                         + (others > 0 ? " · open \(others + 1) times" : ""))
         loadPageText(browser: tab.browser.bundleId, url: tab.url)
     }
 
@@ -254,17 +272,11 @@ final class TabSwitcher: NSObject {
         let row = table.selectedRow
         guard row >= 0, row < rows.count else { return }
         switch rows[row] {
-        case .tab(let tab):
-            tabs[tab.browser.bundleId]?.removeAll { $0 == tab }
-            let now = Date().unixMillis
-            queue.async {
-                if Tabs.close(tab) {
-                    Core.shared.perform("tab closed", { try $0.tabClosed(browser: tab.browser.bundleId, url: tab.url, at: now) },
-                                        then: { [weak self] in self?.loadRemembered() })
-                } else {
-                    DispatchQueue.main.async { NSSound.beep() }
-                }
-            }
+        case .tabs(let group):
+            // One tab: close it. Several of one address: close the copies, keep the latest.
+            closeTabs(group.count > 1 ? Array(group.dropFirst()) : group)
+        case .member(let tab):
+            closeTabs([tab])
         case .closed(let gone):
             closed.removeAll { $0 == gone }
             Core.shared.perform("forget tab") { try $0.forgetTab(browser: gone.browser, url: gone.url) }
@@ -278,6 +290,27 @@ final class TabSwitcher: NSObject {
         select(row)
     }
 
+    private func closeTabs(_ doomed: [BrowserTab]) {
+        for tab in doomed { tabs[tab.browser.bundleId]?.removeAll { $0 == tab } }
+        let now = Date().unixMillis
+        queue.async {
+            var failed = false
+            for tab in doomed {
+                if Tabs.close(tab) {
+                    // A copy of an address still open elsewhere is not closed in memory.
+                    Core.shared.perform("tab closed", { store in
+                        if !doomed.contains(where: { $0 != tab && $0.url == tab.url }) {
+                            try store.tabClosed(browser: tab.browser.bundleId, url: tab.url, at: now)
+                        }
+                    }, then: { [weak self] in self?.loadRemembered() })
+                } else {
+                    failed = true
+                }
+            }
+            if failed { DispatchQueue.main.async { NSSound.beep() } }
+        }
+    }
+
     /// What the core remembers for the search text: closed tabs, and open tabs only their page
     /// text matches. Both follow the open tabs whose title or address matches.
     private func loadRemembered() {
@@ -289,9 +322,10 @@ final class TabSwitcher: NSObject {
         let limit: Int64 = text.isEmpty ? 30 : 300
         Core.shared.run({ store in
             (try store.closedTabs(query: text, limit: limit), try store.openTabsWithText(query: text, limit: 300),
-             try store.searchVisits(query: text, limit: 300))
+             try store.searchVisits(query: text, limit: 300), try store.tabActivity())
         }) { [weak self] result in
-            guard let self, generation == closedGeneration, case .success(let (found, pages, visits)) = result else { return }
+            guard let self, generation == closedGeneration, case .success(let (found, pages, visits, seen)) = result else { return }
+            for tab in seen { activity["\(tab.browser) \(tab.url)", default: 0] = max(activity["\(tab.browser) \(tab.url)"] ?? 0, tab.lastActive) }
             closed = found
             inPage = Set(pages.map { "\($0.browser) \($0.url)" })
             visited = visits
@@ -310,24 +344,48 @@ final class TabSwitcher: NSObject {
             let name = browser.name.lowercased().replacingOccurrences(of: " ", with: "")
             return named.allSatisfy { name.hasPrefix($0) || name.contains($0) }
         }
-        var titled: [Row] = [], addressed: [Row] = [], paged: [Row] = [], notices: [Row] = []
+        var notices: [Row] = []
+        // One row per address per browser; its tabs lead with the one a window shows, front window first.
+        var groups: [[BrowserTab]] = []
+        var index: [String: Int] = [:]
         for browser in shown {
             if let state = status[browser.bundleId], tabs[browser.bundleId] == nil || state != .silent {
                 notices.append(.browser(browser, state))
             }
             for tab in tabs[browser.bundleId] ?? [] {
-                let title = tab.title.lowercased(), url = tab.url.lowercased()
-                guard text.allSatisfy({ title.contains($0) || url.contains($0) }) else {
-                    if !text.isEmpty, inPage.contains("\(tab.browser.bundleId) \(tab.url)") { paged.append(.tab(tab)) }
-                    continue
-                }
-                // Matches in the title come first: the address of many tabs holds a common word.
-                if text.isEmpty || text.allSatisfy(title.contains) {
-                    titled.append(.tab(tab))
+                let key = "\(tab.browser.bundleId) \(tab.url)"
+                if let at = index[key] {
+                    if tab.active && !groups[at][0].active { groups[at].insert(tab, at: 0) } else { groups[at].append(tab) }
                 } else {
-                    addressed.append(.tab(tab))
+                    index[key] = groups.count
+                    groups.append([tab])
                 }
             }
+        }
+        // Latest looked at first; tabs never seen in front keep the browsers' own order after them.
+        let ranked = groups.enumerated().sorted { a, b in
+            let (x, y) = (activity["\(a.element[0].browser.bundleId) \(a.element[0].url)"] ?? 0,
+                          activity["\(b.element[0].browser.bundleId) \(b.element[0].url)"] ?? 0)
+            return x != y ? x > y : a.offset < b.offset
+        }.map(\.element)
+        var titled: [[BrowserTab]] = [], addressed: [[BrowserTab]] = [], paged: [[BrowserTab]] = []
+        for group in ranked {
+            let tab = group[0]
+            let title = tab.title.lowercased(), url = tab.url.lowercased()
+            guard text.allSatisfy({ title.contains($0) || url.contains($0) }) else {
+                if !text.isEmpty, inPage.contains("\(tab.browser.bundleId) \(tab.url)") { paged.append(group) }
+                continue
+            }
+            // Matches in the title come first: the address of many tabs holds a common word.
+            if text.isEmpty || text.allSatisfy(title.contains) {
+                titled.append(group)
+            } else {
+                addressed.append(group)
+            }
+        }
+        let openRows: [Row] = (titled + addressed + paged).flatMap { group -> [Row] in
+            let row = Row.tabs(group)
+            return expanded.contains(Self.key(row)) && group.count > 1 ? [row] + group.map(Row.member) : [row]
         }
         let open = Set(tabs.values.joined().map { "\($0.browser.bundleId) \($0.url)" })
         let gone: [Row] = closed.filter { tab in
@@ -342,9 +400,9 @@ final class TabSwitcher: NSObject {
             let name = Browser.named(visit.browser).name.lowercased().replacingOccurrences(of: " ", with: "")
             return named.allSatisfy { name.contains($0) }
         }.map(Row.visited)
-        rows = notices + titled + addressed + paged + gone + history
+        rows = notices + openRows + gone + history
         table.reloadData()
-        let tabCount = titled.count + addressed.count + paged.count
+        let tabCount = (titled + addressed + paged).reduce(0) { $0 + $1.count }
         count.stringValue = reading.isEmpty
             ? (tabCount == 1 ? "1 tab" : "\(tabCount.formatted()) tabs") + (gone.isEmpty ? "" : " · \(gone.count.formatted()) closed")
                 + (history.isEmpty ? "" : " · \(history.count.formatted()) visited")
@@ -357,7 +415,8 @@ final class TabSwitcher: NSObject {
     /// Identifies a row across reloads, so the selection stays on it.
     private static func key(_ row: Row) -> String {
         switch row {
-        case .tab(let tab): "tab \(tab.browser.bundleId) \(tab.windowId) \(tab.tabId) \(tab.url)"
+        case .tabs(let group): "tabs \(group[0].browser.bundleId) \(group[0].url)"
+        case .member(let tab): "member \(tab.browser.bundleId) \(tab.windowId) \(tab.tabId)"
         case .closed(let tab): "closed \(tab.browser) \(tab.url)"
         case .visited(let visit): "visited \(visit.browser) \(visit.url)"
         case .browser(let browser, _): "browser \(browser.bundleId)"
@@ -377,7 +436,11 @@ final class TabSwitcher: NSObject {
         var hints: [(label: String, key: String)] = []
         if table.selectedRow >= 0, table.selectedRow < rows.count {
             switch rows[table.selectedRow] {
-            case .tab:
+            case .tabs(let group) where group.count > 1:
+                hints.append(("Go to tab", "⏎"))
+                hints.append((expanded.contains(Self.key(rows[table.selectedRow])) ? "Fold" : "Choose of \(group.count)", "⌥⏎"))
+                hints.append((group.count == 2 ? "Close the copy" : "Close \(group.count - 1) copies", "⌥⌫"))
+            case .tabs, .member:
                 hints.append(("Go to tab", "⏎"))
                 hints.append(("Close", "⌥⌫"))
             case .closed, .visited:
@@ -395,12 +458,36 @@ final class TabSwitcher: NSObject {
 
     private func activate(_ row: Int) {
         guard row >= 0, row < rows.count else { return }
+        let target: BrowserTab
         switch rows[row] {
-        case .tab(let tab):
-            close()
-            queue.async {
-                if !Tabs.show(tab) { DispatchQueue.main.async { NSSound.beep() } }
-            }
+        case .tabs(let group): target = group[0]
+        case .member(let tab): target = tab
+        default: return activateRemembered(row)
+        }
+        close()
+        queue.async {
+            if !Tabs.show(target) { DispatchQueue.main.async { NSSound.beep() } }
+        }
+    }
+
+    /// ⌥⏎: lists each tab of an address under its row, or folds them back.
+    private func toggleExpanded(_ row: Int) {
+        guard row >= 0, row < rows.count else { return }
+        let key: String
+        switch rows[row] {
+        case .tabs(let group) where group.count > 1: key = Self.key(rows[row])
+        case .member(let tab): key = "tabs \(tab.browser.bundleId) \(tab.url)"
+        default: return NSSound.beep()
+        }
+        if expanded.remove(key) == nil { expanded.insert(key) }
+        reload()
+        if let at = rows.firstIndex(where: { Self.key($0) == key }) { select(at) }
+    }
+
+    private func activateRemembered(_ row: Int) {
+        switch rows[row] {
+        case .tabs, .member:
+            return
         case .closed(let gone):
             reopen(gone.url, in: gone.browser)
         case .visited(let visit):
@@ -545,10 +632,17 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
         let id = NSUserInterfaceItemIdentifier("tabCell")
         let cell = tableView.makeView(withIdentifier: id, owner: nil) as? TabCell ?? TabCell(identifier: id)
         switch rows[row] {
-        case .tab(let tab):
+        case .tabs(let group):
+            let tab = group[0]
             cell.imageView?.image = Self.icon(tab.browser)
             cell.set(title: tab.title.isEmpty ? Self.shortAddress(tab.url) : tab.title,
-                     detail: Self.shortAddress(tab.url))
+                     detail: (group.count > 1 ? "×\(group.count) · " : "") + Self.shortAddress(tab.url))
+        case .member(let tab):
+            cell.imageView?.image = nil
+            let windows = Array(NSOrderedSet(array: (tabs[tab.browser.bundleId] ?? []).map(\.windowId))) as? [Int] ?? []
+            let window = (windows.firstIndex(of: tab.windowId) ?? 0) + 1
+            let position = ((tabs[tab.browser.bundleId] ?? []).filter { $0.windowId == tab.windowId }.firstIndex(of: tab) ?? 0) + 1
+            cell.set(title: "↳ \(tab.browser.name) · window \(window), tab \(position)", detail: tab.active ? "showing" : "")
         case .closed(let gone):
             cell.imageView?.image = Self.icon(Browser.named(gone.browser))
             let when = Self.relative.localizedString(for: Date(unixMillis: gone.closedAt), relativeTo: Date())
@@ -594,7 +688,11 @@ extension TabSwitcher: NSSearchFieldDelegate {
         case #selector(NSResponder.moveDown(_:)):
             select(table.selectedRow + 1)
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-            activate(table.selectedRow)
+            if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+                toggleExpanded(table.selectedRow)
+            } else {
+                activate(table.selectedRow)
+            }
         case #selector(NSResponder.moveRight(_:))
             where !previewShown && textView.selectedRange() == NSRange(location: textView.string.utf16.count, length: 0):
             togglePreview()

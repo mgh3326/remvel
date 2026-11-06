@@ -9,8 +9,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::{
-    Capture, ClosedTab, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, TabKey, TabSeen,
-    UTI_FILE_PATHS, Visit,
+    Capture, ClosedTab, Facets, Filter, IngestResult, ItemSummary, Rep, Result, SearchHit, Store, TabActivity, TabKey,
+    TabSeen, UTI_FILE_PATHS, Visit,
 };
 
 /// The pasteboard type of Remvel's own rep for file copies: every copied path, one per line.
@@ -122,6 +122,11 @@ impl Remvel {
     /// Every tab `browser` (a bundle id) has open now; tabs of it missing since the last call are closed at `at`.
     pub fn record_tabs(&self, browser: String, tabs: Vec<TabSeen>, at: i64) -> Result<()> {
         self.store().record_tabs(&browser, &tabs, at)
+    }
+
+    /// Open tabs with the time each was last the one shown.
+    pub fn tab_activity(&self) -> Result<Vec<TabActivity>> {
+        self.store().tab_activity()
     }
 
     pub fn tab_closed(&self, browser: String, url: String, at: i64) -> Result<()> {

@@ -16,7 +16,7 @@ pub use history::Visit;
 pub use kind::Kind;
 pub use search::{Filter, SearchHit, SearchMode};
 pub use store::{Capture, Facet, Facets, IngestResult, ItemSummary, KindFacet, Rep, Store, UTI_FILE_PATHS, pin_value};
-pub use tabs::{ClosedTab, TabKey, TabSeen};
+pub use tabs::{ClosedTab, TabActivity, TabKey, TabSeen};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 #[uniffi(flat_error)]

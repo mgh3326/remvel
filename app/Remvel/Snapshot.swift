@@ -60,6 +60,7 @@ struct Snapshot {
             (edge, "Pull requests · mgh3326/remvel", "https://github.com/mgh3326/remvel/pulls"),
             (edge, "Galaxy admin — metadata requests", "https://www.example.com/admin/galaxy/metadata_requests/59302"),
             (edge, "Linear — Inbox", "https://linear.app/inbox"),
+            (edge, "Pull requests · mgh3326/remvel", "https://github.com/mgh3326/remvel/pulls"),
             (whale, "네이버 지도", "https://map.naver.com/"),
             (whale, "Rust 표준 라이브러리 문서", "https://doc.rust-lang.org/std/"),
             (safari, "Apple Developer Documentation", "https://developer.apple.com/documentation/appkit"),
@@ -69,8 +70,8 @@ struct Snapshot {
             BrowserTab(browser: sample.0, windowId: 1, tabId: index + 1, title: sample.1, url: sample.2, active: index == 0)
         }
         // Two tabs closed earlier, remembered in the snapshot's own database.
-        let gone = [TabSeen(url: "https://shopping.naver.com/cart", title: "장바구니"),
-                    TabSeen(url: "https://doc.rust-lang.org/book/", title: "The Rust Programming Language")]
+        let gone = [TabSeen(url: "https://shopping.naver.com/cart", title: "장바구니", active: false),
+                    TabSeen(url: "https://doc.rust-lang.org/book/", title: "The Rust Programming Language", active: false)]
         let now = Date().unixMillis
         Core.shared.run({ store in
             try store.recordTabs(browser: whale.bundleId, tabs: gone, at: now - 3 * 86_400_000)

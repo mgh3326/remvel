@@ -44,9 +44,16 @@ final class TabMemory {
     }
 
     /// Tabs the switcher just read: stored as they are, and the browser counts as read now.
-    func record(_ browser: Browser, _ tabs: [BrowserTab]) {
+    /// `front`: the browser was in front, so the tab its front window shows was just looked at.
+    func record(_ browser: Browser, _ tabs: [BrowserTab], front: Bool) {
         lastRead[browser.bundleId] = Date()
-        store(browser, tabs)
+        store(browser, tabs, front: front)
+    }
+
+    /// The tab the browser's front window shows: what the user is looking at while it is in front.
+    static func frontTab(_ tabs: [BrowserTab]) -> BrowserTab? {
+        guard let window = tabs.first?.windowId else { return nil }
+        return tabs.first { $0.windowId == window && $0.active }
     }
 
     // MARK: Triggers
@@ -119,15 +126,17 @@ final class TabMemory {
         queue.async {
             // Never prompts: a browser not allowed yet is asked for from the switcher.
             guard Tabs.access(browser, ask: false) == .allowed, let tabs = Tabs.read(browser) else { return }
-            self.store(browser, tabs)
+            // Read because the user is using it or just left it: its front tab is the one they saw.
+            self.store(browser, tabs, front: true)
             if withText, let page = Tabs.pageText(browser) {
                 Core.shared.perform("tab text") { try $0.setTabText(browser: browser.bundleId, url: page.url, text: page.text) }
             }
         }
     }
 
-    private func store(_ browser: Browser, _ tabs: [BrowserTab]) {
-        let seen = tabs.map { TabSeen(url: $0.url, title: $0.title) }
+    private func store(_ browser: Browser, _ tabs: [BrowserTab], front: Bool) {
+        let shown = front ? Self.frontTab(tabs) : nil
+        let seen = tabs.map { TabSeen(url: $0.url, title: $0.title, active: $0 == shown) }
         let now = Date().unixMillis
         Core.shared.perform("record tabs") { try $0.recordTabs(browser: browser.bundleId, tabs: seen, at: now) }
     }
