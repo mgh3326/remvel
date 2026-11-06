@@ -2,8 +2,20 @@ import AppKit
 
 private final class TabPanel: NSPanel {
     var onTogglePreview: (() -> Void)?
+    var onCloseTab: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
+
+    /// ⌥⌫ by key code, before the search field sees it: a Korean input method turns it into a plain
+    /// backspace, so it never arrives as "delete word backward".
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 51,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .option {
+            onCloseTab?()
+            return
+        }
+        super.sendEvent(event)
+    }
 
     /// Remvel has no Edit menu to route these, so the search field gets them here.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -527,6 +539,7 @@ final class TabSwitcher: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = self
         panel.onTogglePreview = { [weak self] in self?.togglePreview() }
+        panel.onCloseTab = { [weak self] in self?.closeSelected() }
 
         let background = NSVisualEffectView()
         background.material = .popover
@@ -696,8 +709,6 @@ extension TabSwitcher: NSSearchFieldDelegate {
         case #selector(NSResponder.moveRight(_:))
             where !previewShown && textView.selectedRange() == NSRange(location: textView.string.utf16.count, length: 0):
             togglePreview()
-        case #selector(NSResponder.deleteWordBackward(_:)) where NSApp.currentEvent?.modifierFlags.contains(.option) == true:
-            closeSelected()
         case #selector(NSResponder.insertTab(_:)):
             let query = searchField.stringValue
             close()

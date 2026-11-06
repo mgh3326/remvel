@@ -10,6 +10,8 @@ private final class Panel: NSPanel {
     var onCopyItem: (() -> Void)?
     var onShowActions: (() -> Void)?
     var onToggleLargePreview: (() -> Void)?
+    /// ⌥⌫ deletes the selected item, as in Maccy.
+    var onDeleteItem: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
 
@@ -19,6 +21,12 @@ private final class Panel: NSPanel {
            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .option,
            event.keyCode == 35 { // P
             onTogglePin?()
+            return
+        }
+        // ⌥⌫ likewise: a Korean input method turns it into a plain backspace, never "delete word backward".
+        if event.type == .keyDown, event.keyCode == 51,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .option {
+            onDeleteItem?()
             return
         }
         super.sendEvent(event)
@@ -170,6 +178,7 @@ final class PopupController: NSObject {
         panel.onTogglePin = { [weak self] in self.map { $0.togglePin(row: $0.table.selectedRow) } }
         panel.onCopyItem = { [weak self] in self?.pasteSelected(mode: .copyOnly) }
         panel.onShowActions = { [weak self] in self?.showActions() }
+        panel.onDeleteItem = { [weak self] in self.map { $0.delete(row: $0.table.selectedRow) } }
         panel.onToggleLargePreview = { [weak self] in self.map { $0.setPreviewMode($0.previewMode.next) } }
         preview.onPickFile = { [weak self] path in self?.pasteFiles([path], ofRow: self?.table.selectedRow ?? -1) }
         sidebar.onSelect = { [weak self] filter in self?.model.filter = filter }
@@ -1113,9 +1122,6 @@ extension PopupController: NSSearchFieldDelegate {
             let query = searchField.stringValue, topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
             close()
             onHop?(query, topLeft)
-        case #selector(NSResponder.deleteWordBackward(_:)) where NSApp.currentEvent?.modifierFlags.contains(.option) == true:
-            // ⌥⌫ deletes the selected item, as in Maccy.
-            delete(row: table.selectedRow)
         case #selector(NSResponder.cancelOperation(_:)):
             if !queue.isEmpty {
                 clearQueue()
