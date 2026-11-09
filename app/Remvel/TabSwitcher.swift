@@ -3,6 +3,7 @@ import AppKit
 private final class TabPanel: NSPanel {
     var onTogglePreview: (() -> Void)?
     var onCloseTab: (() -> Void)?
+    var onOpenIn: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
 
@@ -30,6 +31,10 @@ private final class TabPanel: NSPanel {
             case 6: editor.undoManager?.undo(); return true
             default: break
             }
+        }
+        if flags == .command, event.keyCode == 36 || event.keyCode == 76 { // ⌘⏎, ⌘enter
+            onOpenIn?()
+            return true
         }
         // keyCode 16 is Y on a US layout, so ⌘Y works while typing Korean too.
         if flags == .command, event.keyCode == 16 {
@@ -66,6 +71,8 @@ final class TabSwitcher: NSObject {
         case header(String)
         /// The search text is an address no open tab shows: ⏎ opens it, as an address bar would.
         case address(URL, Browser?)
+        /// Under a row after ⌘⏎: its page in a new tab of another running browser.
+        case openIn(String, Browser)
         /// A browser whose tabs need permission first, or that did not answer.
         case browser(Browser, Status)
     }
@@ -118,6 +125,8 @@ final class TabSwitcher: NSObject {
     private var activity: [String: Int64] = [:]
     /// Rows opened with ⌥⏎ to show each of their tabs.
     private var expanded: Set<String> = []
+    /// The row opened with ⌘⏎ to list other browsers to open its page in.
+    private var openInRow: String?
     /// Row order once the user starts moving through or closing tabs, until the list closes.
     /// Closing a tab changes which tab its window shows, which would re-rank the list under the cursor.
     private var frozenOrder: [String: Int]?
@@ -144,6 +153,7 @@ final class TabSwitcher: NSObject {
         }
         if !panel.isVisible {
             expanded = []
+            openInRow = nil
             frozenOrder = nil
             refresh()
             HistoryImport.shared.run()
@@ -281,6 +291,9 @@ final class TabSwitcher: NSObject {
         case .address(let url, let browser):
             preview.show(page: url.absoluteString, title: "", kind: browser?.name ?? "", meta: "Opens in a new tab")
             return
+        case .openIn(let url, let browser):
+            preview.show(page: url, title: "", kind: browser.name, meta: "Opens in a new tab")
+            return
         case .browser, .header:
             preview.show(nil, force: true)
             return
@@ -322,7 +335,7 @@ final class TabSwitcher: NSObject {
             Core.shared.perform("forget visits") { store in
                 for visit in visits { try store.forgetVisit(browser: visit.browser, url: visit.url) }
             }
-        case .browser, .header, .address:
+        case .browser, .header, .address, .openIn:
             return NSSound.beep()
         }
         reload()
@@ -472,6 +485,10 @@ final class TabSwitcher: NSObject {
         rows = notices + openRows
             + (gone.isEmpty ? [] : (sections ? [.header("Closed")] : []) + gone)
             + (history.isEmpty ? [] : (sections ? [.header("History")] : []) + history)
+        if let target = openInRow, let at = rows.firstIndex(where: { Self.key($0) == target }), let page = Self.page(of: rows[at]) {
+            let others = browsers.filter { $0.bundleId != page.browser }
+            rows.insert(contentsOf: others.map { Row.openIn(page.url, $0) }, at: at + 1)
+        }
         table.reloadData()
         let tabCount = (exact + titled + addressed + paged).reduce(0) { $0 + $1.count }
         count.stringValue = reading.isEmpty
@@ -541,6 +558,7 @@ final class TabSwitcher: NSObject {
         case .visited(let visits): "visited \(visits[0].browser) \(page(visits[0].url))"
         case .header(let title): "header \(title)"
         case .address(let url, _): "address \(url.absoluteString)"
+        case .openIn(let url, let browser): "openin \(browser.bundleId) \(url)"
         case .browser(let browser, _): "browser \(browser.bundleId)"
         }
     }
@@ -576,10 +594,14 @@ final class TabSwitcher: NSObject {
                 hints.append(("Forget", "⌥⌫"))
             case .header: break
             case .address(_, let browser): hints.append((browser.map { "Open in \($0.name)" } ?? "Open", "⏎"))
+            case .openIn(_, let browser): hints.append(("Open in \(browser.name)", "⏎"))
             case .browser(_, .notAsked): hints.append(("Allow", "⏎"))
             case .browser(_, .denied): hints.append(("Open Privacy settings", "⏎"))
             case .browser(_, .silent): break
             }
+        }
+        if table.selectedRow >= 0, table.selectedRow < rows.count, Self.page(of: rows[table.selectedRow]) != nil {
+            hints.append(("Other browser", "⌘⏎"))
         }
         hints.append(("Preview", "⌘Y"))
         hints.append(("Clipboard", "⇥"))
@@ -597,6 +619,32 @@ final class TabSwitcher: NSObject {
         close()
         queue.async {
             if !Tabs.show(target) { DispatchQueue.main.async { NSSound.beep() } }
+        }
+    }
+
+    /// The page a row stands for, and the browser it is in.
+    private static func page(of row: Row) -> (url: String, browser: String?)? {
+        switch row {
+        case .tabs(let group): (group[0].url, group[0].browser.bundleId)
+        case .member(let tab): (tab.url, tab.browser.bundleId)
+        case .closed(let tab): (tab.url, tab.browser)
+        case .visited(let visits): (visits[0].url, visits[0].browser)
+        case .address(let url, let browser): (url.absoluteString, browser?.bundleId)
+        case .openIn, .header, .browser: nil
+        }
+    }
+
+    /// ⌘⏎: lists the other running browsers under the row, to open its page in one; again folds them.
+    private func toggleOpenIn(_ row: Int) {
+        guard row >= 0, row < rows.count else { return }
+        var key = Self.key(rows[row])
+        if case .openIn = rows[row], let owner = openInRow { key = owner }
+        guard Self.page(of: rows.first { Self.key($0) == key } ?? rows[row]) != nil else { return NSSound.beep() }
+        freezeOrder()
+        openInRow = openInRow == key ? nil : key
+        reload()
+        if let at = rows.firstIndex(where: { Self.key($0) == key }) {
+            select(openInRow == nil ? at : at + 1)
         }
     }
 
@@ -627,6 +675,8 @@ final class TabSwitcher: NSObject {
             return
         case .address(let url, let browser):
             reopen(url.absoluteString, in: browser?.bundleId ?? "")
+        case .openIn(let url, let browser):
+            reopen(url, in: browser.bundleId)
         case .browser(let browser, .notAsked):
             ask(browser)
         case .browser(_, .denied):
@@ -663,6 +713,7 @@ final class TabSwitcher: NSObject {
         panel.delegate = self
         panel.onTogglePreview = { [weak self] in self?.togglePreview() }
         panel.onCloseTab = { [weak self] in self?.closeSelected() }
+        panel.onOpenIn = { [weak self] in self.map { $0.toggleOpenIn($0.table.selectedRow) } }
 
         let background = NSVisualEffectView()
         background.material = .popover
@@ -796,6 +847,9 @@ extension TabSwitcher: NSTableViewDataSource, NSTableViewDelegate {
         cell.time = ""
         switch rows[row] {
         case .header: break
+        case .openIn(_, let browser):
+            cell.imageView?.image = Self.icon(browser)
+            cell.set(title: "↳ Open in \(browser.name)", detail: "")
         case .address(let url, let browser):
             cell.imageView?.image = browser.flatMap(Self.icon) ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
             cell.set(title: "Open \(Self.page(url.absoluteString))", detail: browser.map { "in \($0.name)" } ?? "")
