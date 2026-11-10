@@ -9,7 +9,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS items (
     id              INTEGER PRIMARY KEY,
     content_hash    BLOB    NOT NULL UNIQUE,
-    kind            TEXT    NOT NULL,          -- text | link | rich | image | files
+    kind            TEXT    NOT NULL,          -- text | link | rich | image | files | color | note
     title           TEXT    NOT NULL,          -- <= TITLE_MAX_CHARS, single line
     app             TEXT,
     text_bytes      INTEGER NOT NULL DEFAULT 0,

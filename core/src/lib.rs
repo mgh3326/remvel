@@ -6,6 +6,7 @@
 mod ffi;
 mod history;
 mod kind;
+mod notes;
 mod schema;
 mod search;
 mod store;

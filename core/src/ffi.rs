@@ -115,6 +115,11 @@ impl Remvel {
         self.store().unrecognized_images(limit.max(0))
     }
 
+    /// Saves `text` as note `id`, or as a new note when `id` is nil; returns the note's id.
+    pub fn save_note(&self, id: Option<i64>, text: String, at: i64) -> Result<i64> {
+        self.store().save_note(id, &text, at)
+    }
+
     pub fn delete(&self, id: i64) -> Result<()> {
         self.store().delete(id)
     }

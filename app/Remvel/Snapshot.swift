@@ -122,6 +122,7 @@ struct Snapshot {
             )).id
             if body.hasPrefix("cargo") { try store.setPinned(id: id, pinned: true, at: 1) }
         }
+        _ = try store.saveNote(id: nil, text: "배포 전 확인\n- 버전 올리기\n- CHANGELOG 정리", at: at + 5_000)
         for (index, name) in ["river-valley", "review-panel-dark", "archive-levels"].enumerated() {
             let image = NSApp.applicationIconImage!
             let png = NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!

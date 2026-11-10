@@ -19,7 +19,7 @@ const TRANSIENT_UTIS: &[&str] = &[
     "com.apple.WebKit.custom-pasteboard-data",
 ];
 
-const UTI_TEXT: &str = "public.utf8-plain-text";
+pub(crate) const UTI_TEXT: &str = "public.utf8-plain-text";
 const UTI_HTML: &str = "public.html";
 const UTI_RTF: &str = "public.rtf";
 const UTI_FILE_URL: &str = "public.file-url";
@@ -97,7 +97,7 @@ pub fn pin_value(at: i64) -> String {
 
 pub struct Store {
     pub(crate) conn: Connection,
-    titles: TitleIndex,
+    pub(crate) titles: TitleIndex,
 }
 
 impl Store {
@@ -360,10 +360,10 @@ impl Store {
         Ok(())
     }
 
-    /// Keeps the newest `max_items` unpinned items.
+    /// Keeps the newest `max_items` unpinned items. Notes are kept too.
     pub fn trim(&mut self, max_items: i64) -> Result<usize> {
         let tx = self.conn.transaction()?;
-        let doomed = "SELECT id FROM items WHERE pin IS NULL
+        let doomed = "SELECT id FROM items WHERE pin IS NULL AND kind != 'note'
                       ORDER BY last_copied_at DESC, id DESC LIMIT -1 OFFSET ?1";
         tx.execute(&format!("DELETE FROM item_fts WHERE rowid IN ({doomed})"), [max_items])?;
         let removed = tx.execute(&format!("DELETE FROM items WHERE id IN ({doomed})"), [max_items])?;
@@ -420,7 +420,7 @@ fn summary_from_row(r: &rusqlite::Row) -> rusqlite::Result<ItemSummary> {
     })
 }
 
-fn content_hash(reps: &[Rep]) -> blake3::Hash {
+pub(crate) fn content_hash(reps: &[Rep]) -> blake3::Hash {
     let mut stable: Vec<&Rep> = reps.iter().filter(|r| !TRANSIENT_UTIS.contains(&r.uti.as_str())).collect();
     stable.sort_by(|a, b| a.uti.cmp(&b.uti));
     let mut hasher = blake3::Hasher::new();
@@ -490,7 +490,7 @@ fn plain_text(capture: &Capture) -> String {
     String::new()
 }
 
-fn make_title(text: &str, kind: Kind) -> String {
+pub(crate) fn make_title(text: &str, kind: Kind) -> String {
     let mut title = String::with_capacity(TITLE_MAX_CHARS);
     let mut last_space = true;
     for ch in text.chars() {

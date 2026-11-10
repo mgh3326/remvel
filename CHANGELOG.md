@@ -4,6 +4,7 @@ Each version's section becomes its GitHub release notes and is shown in Remvel's
 
 ## 0.4.0
 
+- Notes: ⌘E in the popup opens the selected copy's text in a small editor, ⌘N (or New Note in the menu bar) an empty one. Notes save as you type, show with a note icon, are found by search and `#note`, paste like copies and are never trimmed. ⌘⏎ in the editor pastes the note into the app you were in; a note left empty is deleted.
 - Settings → Windows: ⌃⌥⇧←/→ and ⌃⌥⇧1–9 send the focused window to another desktop, ⌃⌥⌘←/→ to another display, keeping its place on the screen. Off by default.
 - An image's preview shows the text read from it below the picture, selectable and scrolling. Words of the search are marked in it.
 - A link whose page shows no picture (a sign-in wall, a bot check, a private link) shows its full address large under the card, host in bold.

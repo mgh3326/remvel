@@ -51,6 +51,8 @@ Press **⇧⌘C** (changeable in Settings) to open the history.
 | ⌘-click, then ⏎ | Paste several items in the order you picked them |
 | ⌥P | Pin or unpin: pinned items stay on top and are never trimmed |
 | ⌥⌫ | Delete the selected item |
+| ⌘N | New note |
+| ⌘E | Edit the selected note, or the selected copy's text as a new note |
 | ⌘K | Actions for the selected item, including pasting it changed (case, JSON, URL, Base64, lines) |
 | ⌘Y | List only → list and preview → large preview. Settings → Open with picks the starting size |
 | → | Show the preview (at the end of the search text) |
@@ -58,7 +60,9 @@ Press **⇧⌘C** (changeable in Settings) to open the history.
 | ⌥⌘S | Show the sidebar: browse by kind and source app |
 | ⌘, | Settings |
 
-Filter with the filter button next to the search field, or type `#link` `#image` `#file` `#color` `#text` `#rich` along with search text. `@` and the start of an app's name filters by source app: `@safari #link github`.
+Filter with the filter button next to the search field, or type `#note` `#link` `#image` `#file` `#color` `#text` `#rich` along with search text. `@` and the start of an app's name filters by source app: `@safari #link github`.
+
+Notes take the place of a scratch note in another app: ⌘E opens a copy in a small editor to fix it up, ⌘N (or New Note in the menu bar) starts an empty one. A note saves as you type, is searched and pasted like any copy, and is never trimmed; ⌘⏎ in the editor pastes it into the app you were in. A note left empty is deleted.
 
 Search also finds words inside copied images: Remvel reads them on your Mac with Apple's Vision framework, in a separate short-lived process so the app itself stays small. ⇧⏎ on an image pastes its text.
 

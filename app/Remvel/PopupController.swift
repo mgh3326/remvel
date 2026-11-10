@@ -12,6 +12,9 @@ private final class Panel: NSPanel {
     var onToggleLargePreview: (() -> Void)?
     /// ⌥⌫ deletes the selected item, as in Maccy.
     var onDeleteItem: (() -> Void)?
+    /// ⌘N opens an empty note; ⌘E edits the selected note, or the selected copy's text as a new note.
+    var onNewNote: (() -> Void)?
+    var onEditNote: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
 
@@ -34,7 +37,7 @@ private final class Panel: NSPanel {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let key = Self.latinKey(event)
+        let key = event.latinKey
         // Remvel has no Edit menu to route these, so the search field gets them here.
         if let editor = firstResponder as? NSTextView {
             switch (flags, key) {
@@ -69,21 +72,16 @@ private final class Panel: NSPanel {
             onToggleSidebar?()
             return true
         }
+        if flags == .command, key == "n" {
+            onNewNote?()
+            return true
+        }
+        if flags == .command, key == "e" {
+            onEditNote?()
+            return true
+        }
         return super.performKeyEquivalent(with: event)
     }
-
-    /// The key as on a US layout, so ⌘Y works while typing Korean ("ㅛ") or another non-Latin script.
-    /// Latin layouts keep their own letters, so a Dvorak user's ⌘K is still the key marked K.
-    private static func latinKey(_ event: NSEvent) -> String {
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        if key.allSatisfy(\.isASCII) { return key }
-        return usKeys[event.keyCode] ?? key
-    }
-
-    private static let usKeys: [UInt16: String] = [
-        0: "a", 1: "s", 6: "z", 7: "x", 8: "c", 9: "v", 16: "y", 40: "k", 43: ",",
-        18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
-    ]
 }
 
 /// The popup: search band, optional facet sidebar, virtualized history list, preview card, hint footer.
@@ -179,6 +177,8 @@ final class PopupController: NSObject {
         panel.onCopyItem = { [weak self] in self?.pasteSelected(mode: .copyOnly) }
         panel.onShowActions = { [weak self] in self?.showActions() }
         panel.onDeleteItem = { [weak self] in self.map { $0.delete(row: $0.table.selectedRow) } }
+        panel.onNewNote = { [weak self] in self?.newNote() }
+        panel.onEditNote = { [weak self] in self.map { $0.editNote(row: $0.table.selectedRow) } }
         panel.onToggleLargePreview = { [weak self] in self.map { $0.setPreviewMode($0.previewMode.next) } }
         preview.onPickFile = { [weak self] path in self?.pasteFiles([path], ofRow: self?.table.selectedRow ?? -1) }
         sidebar.onSelect = { [weak self] filter in self?.model.filter = filter }
@@ -393,6 +393,23 @@ final class PopupController: NSObject {
         }, completionHandler: remove)
     }
 
+    // MARK: Notes
+
+    private func newNote() {
+        close()
+        NoteEditor.shared.open(id: nil, text: "")
+    }
+
+    /// A note opens as itself; anything else with text opens as a new note holding a copy of that text.
+    private func editNote(row: Int) {
+        guard let item = model.summary(at: row) else { return newNote() }
+        Core.shared.run({ try $0.fullText(id: item.id) }) { [weak self] result in
+            guard case .success(let text) = result, item.kind == .note || !text.isEmpty else { return NSSound.beep() }
+            self?.close()
+            NoteEditor.shared.open(id: item.kind == .note ? item.id : nil, text: text, source: item.kind == .note ? nil : item.id)
+        }
+    }
+
     // MARK: Actions (⌘K) and transforms
 
     /// The selected item's actions as a menu under its row; type to jump to one.
@@ -419,6 +436,8 @@ final class PopupController: NSObject {
                 },
                 action(item.pin == nil ? "Pin" : "Unpin", "⌥P") { [weak self] in self?.togglePin(row: row) },
                 action("Delete", "⌥⌫") { [weak self] in self?.delete(row: row) },
+                action(item.kind == .note ? "Edit Note" : "Edit as Note", "⌘E") { [weak self] in self?.editNote(row: row) },
+                action("New Note", "⌘N") { [weak self] in self?.newNote() },
             ]),
         ]
         if item.kind == .files {
@@ -1275,4 +1294,19 @@ private final class SidebarController: NSObject, NSTableViewDataSource, NSTableV
         guard !updating, table.selectedRow >= 0, let filter = rows[table.selectedRow].filter else { return }
         onSelect?(filter)
     }
+}
+
+extension NSEvent {
+    /// The key as on a US layout, so ⌘Y works while typing Korean ("ㅛ") or another non-Latin script.
+    /// Latin layouts keep their own letters, so a Dvorak user's ⌘K is still the key marked K.
+    var latinKey: String {
+        let key = charactersIgnoringModifiers?.lowercased() ?? ""
+        if key.allSatisfy(\.isASCII) { return key }
+        return Self.usKeys[keyCode] ?? key
+    }
+
+    private static let usKeys: [UInt16: String] = [
+        0: "a", 1: "s", 6: "z", 7: "x", 8: "c", 9: "v", 13: "w", 14: "e", 16: "y", 40: "k", 43: ",", 45: "n",
+        18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
+    ]
 }

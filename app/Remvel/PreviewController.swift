@@ -464,9 +464,10 @@ final class PreviewController: NSObject {
         if let app = item.app {
             parts.append(SourceApps.name(app))
         }
-        parts.append("First \(shortDate.string(from: date(item.firstCopiedAt)))")
+        let note = item.kind == .note
+        parts.append("\(note ? "Created" : "First") \(shortDate.string(from: date(item.firstCopiedAt)))")
         if item.lastCopiedAt != item.firstCopiedAt {
-            parts.append("Last \(shortDate.string(from: date(item.lastCopiedAt)))")
+            parts.append("\(note ? "Edited" : "Last") \(shortDate.string(from: date(item.lastCopiedAt)))")
         }
         switch item.kind {
         case .files:

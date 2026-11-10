@@ -10,11 +10,11 @@ enum Kinds {
     }
 
     /// Every kind, in menu order.
-    static let all: [Info] = [Kind.text, .link, .image, .files, .color, .rich].map(Kinds.info)
+    static let all: [Info] = [Kind.note, .text, .link, .image, .files, .color, .rich].map(Kinds.info)
 
     /// `#tag` words and the kind each selects; a few aliases on top of the canonical tags.
     static let tags: [String: Kind] = Dictionary(uniqueKeysWithValues: all.map { ($0.tag, $0.kind) })
-        .merging(["url": .link, "img": .image, "files": .files, "colour": .color]) { old, _ in old }
+        .merging(["url": .link, "img": .image, "files": .files, "colour": .color, "notes": .note, "memo": .note]) { old, _ in old }
 
     /// Exhaustive, so a kind added in the core does not build until it has a name and symbol here.
     static func info(_ kind: Kind) -> Info {
@@ -25,6 +25,7 @@ enum Kinds {
         case .files: Info(kind: kind, name: "Files", symbol: "doc", tag: "file")
         case .color: Info(kind: kind, name: "Colors", symbol: "paintpalette", tag: "color")
         case .rich: Info(kind: kind, name: "Rich Text", symbol: "textformat", tag: "rich")
+        case .note: Info(kind: kind, name: "Notes", symbol: "note.text", tag: "note")
         }
     }
 

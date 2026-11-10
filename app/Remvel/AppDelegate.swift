@@ -129,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         openItem = menu.addItem(withTitle: "Open Remvel", action: #selector(togglePopup), keyEquivalent: "")
         tabsItem = menu.addItem(withTitle: "Browser Tabs", action: #selector(toggleTabs), keyEquivalent: "")
+        menu.addItem(withTitle: "New Note", action: #selector(newNote), keyEquivalent: "")
         pauseItem = menu.addItem(withTitle: "Pause Recording", action: #selector(togglePause), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
@@ -165,6 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             tabs.toggle()
         }
+    }
+
+    @objc private func newNote() {
+        NoteEditor.shared.open(id: nil, text: "")
     }
 
     @objc private func togglePause() {

@@ -15,10 +15,12 @@ pub enum Kind {
     Files,
     /// A CSS-style colour and nothing else.
     Color,
+    /// Written or edited in Remvel's note editor rather than copied (notes.rs). Kept when the history is trimmed.
+    Note,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Text, Kind::Link, Kind::Rich, Kind::Image, Kind::Files, Kind::Color];
+    pub const ALL: [Kind; 7] = [Kind::Text, Kind::Link, Kind::Rich, Kind::Image, Kind::Files, Kind::Color, Kind::Note];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -28,6 +30,7 @@ impl Kind {
             Kind::Image => "image",
             Kind::Files => "files",
             Kind::Color => "color",
+            Kind::Note => "note",
         }
     }
 
