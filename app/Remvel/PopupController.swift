@@ -436,6 +436,8 @@ final class PopupController: NSObject {
                 },
                 action(item.pin == nil ? "Pin" : "Unpin", "⌥P") { [weak self] in self?.togglePin(row: row) },
                 action("Delete", "⌥⌫") { [weak self] in self?.delete(row: row) },
+            ]),
+            ActionSection(title: "Notes", actions: [
                 action(item.kind == .note ? "Edit Note" : "Edit as Note", "⌘E") { [weak self] in self?.editNote(row: row) },
                 action("New Note", "⌘N") { [weak self] in self?.newNote() },
             ]),
@@ -564,6 +566,7 @@ final class PopupController: NSObject {
         footerLine.boxType = .separator
 
         footer.lineBreakMode = .byTruncatingTail
+        footer.maximumNumberOfLines = 1
         settingsHint.attributedStringValue = Self.hints([("Tabs", "⇥"), ("Settings", "⌘,")])
 
         for label in [footer, listHeader, listCount, settingsHint] {
@@ -843,15 +846,19 @@ final class PopupController: NSObject {
             default:
                 hints = [("⏎", "Paste"), ("⇧⏎", "Plain text"), ("⌥⏎", "Copy")]
             }
+            let edit = ("⌘E", item?.kind == .note ? "Edit note" : "Edit as note")
             if previewMode == .hidden {
                 // The list-only popup is narrow; ⌘K lists the rest.
-                hints = Array(hints.prefix(2)) + [("⌘K", "Actions"), ("⌘Y", "Preview")]
+                hints = Array(hints.prefix(2)) + [("⌘E", "Note"), ("⌘K", "Actions"), ("⌘Y", "Preview")]
             } else {
-                hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"), ("⌘K", "Actions"),
+                hints += [("⌘1–9", "Paste row"), ("⌘-click", "Queue"), edit, ("⌘N", "New note"), ("⌘K", "Actions"),
                           ("⌘Y", Self.nextModeHint[previewMode.next]!)]
             }
         }
+        // Hidden, it would still hold its width; empty, the hints get the whole footer.
         settingsHint.isHidden = previewMode == .hidden
+        settingsHint.attributedStringValue = previewMode == .hidden
+            ? NSAttributedString() : Self.hints([("Tabs", "⇥"), ("Settings", "⌘,")])
         footer.attributedStringValue = Self.hints(hints.map { ($1, $0) })
     }
 
